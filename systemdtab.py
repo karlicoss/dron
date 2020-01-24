@@ -38,6 +38,7 @@ def timer(*, unit_name: str, when: When) -> str:
 # managed by systemdtab
 [Unit]
 Description=Timer for {unit_name}
+Systemdtab=true
 
 [Timer]
 OnCalendar={when}
@@ -49,12 +50,12 @@ Command = Union[PathIsh, Sequence[PathIsh]]
 
 from tempfile import NamedTemporaryFile, TemporaryDirectory
 
-def verify(*, unit_name: str, contents: str):
+def verify(*, unit_file: str, contents: str):
     # TODO ugh pipe doesn't work??
 # systemd-analyze --user verify <(cat systemdtab-test.service)       I  18:58:02  
 # Failed to prepare filename /proc/self/fd/11: Invalid argument
     with TemporaryDirectory() as tdir:
-        sfile = (Path(tdir) / unit_name).with_suffix('.service')
+        sfile = Path(tdir) / unit_file
         sfile.write_text(contents)
         res = run(['systemd-analyze', '--user', 'verify', str(sfile)], stdout=PIPE, stderr=PIPE)
         res.check_returncode()
@@ -70,10 +71,10 @@ def test_verify():
     import pytest # type: ignore[import]
     def fails(contents):
         with pytest.raises(Exception):
-            verify(unit_name='whatever.service', contents=contents)
+            verify(unit_file='whatever.service', contents=contents)
 
     def ok(contents):
-        verify(unit_name='ok.service', contents=contents)
+        verify(unit_file='ok.service', contents=contents)
 
     ok(contents='''
 [Service]
@@ -142,13 +143,11 @@ def scu(*args, method=check_call, **kwargs):
     return method(['systemctl', '--user', *args], **kwargs) # TODO status???
 
 
-def write_unit(*, unit_name: str, contents: str) -> None:
+def write_unit(*, unit_file: str, contents: str) -> None:
     # TODO contextmanager?
-    verify(unit_name=unit_name, contents=contents)
+    verify(unit_file=unit_file, contents=contents)
     # TODO eh?
-
-    uservice = unit_name + '.service'
-    (DIR / uservice).write_text(contents)
+    (DIR / unit_file).write_text(contents)
 
 
 def prepare():
@@ -175,7 +174,7 @@ ExecStart={target} {user} %i
 # Group=systemd-journal
 '''
     # TODO copy the file to local??
-    write_unit(unit_name=f'status-email@', contents=X)
+    write_unit(unit_file=f'status-email@.service', contents=X)
     # I guess makes sense to reaload here; fairly atomic step
     scu('daemon-reload')
 
@@ -197,13 +196,12 @@ def job(when: Optional[When], command: Command, *, unit_name: Optional[str]=None
     # TODO not sure about names.
     # I guess warn user about non-unique names and prompt to give a more specific name?
     u = unit(unit_name=unit_name, command=command)
-    write_unit(unit_name=unit_name, contents=u)
+    write_unit(unit_file=unit_name + '.service', contents=u)
 
     if when is not None:
         t = timer(unit_name=unit_name, when=when)
-        utimer = unit_name + '.timer'
-        (DIR / utimer).write_text(t)
-        scu('start', utimer)
+        write_unit(unit_file=unit_name + '.timer', contents=t)
+        scu('start', unit_name + '.timer')
     # TODO otherwise just unit status or something?
 
     # TODO FIXME enable?
