@@ -63,8 +63,12 @@ def unit(*, unit_name: str, command: Command) -> str:
 # TODO description unnecessary?
 [Service]
 ExecStart={command}
+OnFailure=status-email@%n.service
 '''
+    # TODO not sure if should include username??
     return res
+# TODO need to install systemdtab-email thing?
+# TODO dunno, separate script might be nicer to test?
 
     # TODO FIXME
 
@@ -89,6 +93,34 @@ def scu(*args, **kwargs):
     check_call(['systemctl', '--user', *args], **kwargs) # TODO status???
 
 
+def write_unit(*, unit_name: str, contents: str) -> None:
+    # TODO contextmanager?
+    verify(unit_name=unit_name, contents=contents)
+
+    uservice = unit_name + '.service'
+    (DIR / uservice).write_text(contents)
+
+
+def prepare():
+    # TODO automatically email to user? I guess make sense..
+    import getpass
+    user = getpass.getuser()
+    X = f'''
+[Unit]
+Description=status email for %i to {user}
+
+[Service]
+Type=oneshot
+ExecStart=/home/karlicos/bin/systemd-email {user} %i
+User=nobody
+Group=systemd-journal
+'''
+    write_unit(unit_name=f'status-email@', contents=X)
+    # I guess makes sense to reaload here; fairly atomic step
+    scu('daemon-reload')
+
+
+
 # TODO think about arg names?
 # TODO not sure if should give it default often?
 # TODO when first? so it's more compat to crontab..
@@ -98,7 +130,6 @@ def job(when: When, command: Command, *, unit_name: Optional[str]=None):
     # TODO not sure about names.
     # I guess warn user about non-unique names and prompt to give a more specific name?
     u = unit(unit_name=unit_name, command=command)
-    verify(unit_name=unit_name, contents=u)
 
     t = timer(unit_name=unit_name, when=when)
     # TODO would be nice to revert....
@@ -106,14 +137,14 @@ def job(when: When, command: Command, *, unit_name: Optional[str]=None):
     # TODO name it systemdsl?
     # TODO not sure what rollback should do w.r.t to
     # TODO perhaps, only reenable changed ones? ugh. makes it trickier...
-    uservice = unit_name + '.service'
     utimer = unit_name + '.timer'
-    (DIR / uservice).write_text(u)
     (DIR / utimer).write_text(t)
     # TODO FIXME enable?
+    # TODO verify everything before starting to update
+    # TODO copy files with rollback? not sure how easy it is..
     scu('start', utimer)
-    scu('status', utimer)
-    # TODO list-timers --all?
+    # scu('status', utimer)
+    scu('list-timers', '--all')
 
 
 
