@@ -45,22 +45,25 @@ PathIsh = Union[str, Path]
 
 Command = Union[PathIsh, Sequence[PathIsh]]
 
-from tempfile import NamedTemporaryFile
-def verify(contents: str):
+from tempfile import NamedTemporaryFile, TemporaryDirectory
+def verify(*, unit_name: str, contents: str):
     # TODO ugh pipe doesn't work??
 # systemd-analyze --user verify <(cat systemdtab-test.service)       I  18:58:02  
 # Failed to prepare filename /proc/self/fd/11: Invalid argument
-    with NamedTemporaryFile() as f:
-        Path(f.name).write_text(contents)
-        check_call(['systemd-analyze', 'verify', f.name])
+    with TemporaryDirectory() as tdir:
+        sfile = (Path(tdir) / unit_name).with_suffix('.service')
+        sfile.write_text(contents)
+        check_call(['systemd-analyze', '--user', 'verify', str(sfile)])
 
 
 def unit(*, unit_name: str, command: Command) -> str:
     # TODO allow to pass extra args
     res = f'''
 # managed by systemdtab
+# TODO description unnecessary?
+[Service]
+ExecStart={command}
 '''
-    verify(res)
     return res
 
     # TODO FIXME
@@ -95,16 +98,22 @@ def job(when: When, command: Command, *, unit_name: Optional[str]=None):
     # TODO not sure about names.
     # I guess warn user about non-unique names and prompt to give a more specific name?
     u = unit(unit_name=unit_name, command=command)
+    verify(unit_name=unit_name, contents=u)
+
     t = timer(unit_name=unit_name, when=when)
     # TODO would be nice to revert....
     # TODO assert that managed by systemdtab
     # TODO name it systemdsl?
     # TODO not sure what rollback should do w.r.t to
     # TODO perhaps, only reenable changed ones? ugh. makes it trickier...
-    (DIR / unit_name).with_suffix('.service').write_text(u)
-    (DIR / unit_name).with_suffix('.timer').write_text(t)
+    uservice = unit_name + '.service'
+    utimer = unit_name + '.timer'
+    (DIR / uservice).write_text(u)
+    (DIR / utimer).write_text(t)
     # TODO FIXME enable?
-    scu('start', unit_name)
+    scu('start', utimer)
+    scu('status', utimer)
+    # TODO list-timers --all?
 
 
 
