@@ -2,7 +2,7 @@
 import getpass
 from pathlib import Path
 import shutil
-from subprocess import check_call, CalledProcessError, run, PIPE
+from subprocess import check_call, CalledProcessError, run, PIPE, check_output
 from typing import NamedTuple, Union, Sequence, Optional
 
 
@@ -61,20 +61,26 @@ def verify(*, unit_name: str, contents: str):
         out = res.stdout
         err = res.stderr
         assert out == b'', out
-        assert err == b'', err
-        # TODO ugh. also make sure there is no output?
+        lines = err.splitlines()
+        lines = [l for l in lines if b"Unknown lvalue 'Systemdtab'" not in l] # meh
+        assert len(lines) == 0, err
 
 
 def test_verify():
-    import pytest
+    import pytest # type: ignore[import]
     def fails(contents):
         with pytest.raises(Exception):
             verify(unit_name='whatever.service', contents=contents)
 
-    verify(unit_name='ok.service', contents='''
+    def ok(contents):
+        verify(unit_name='ok.service', contents=contents)
+
+    ok(contents='''
 [Service]
 ExecStart=echo 123
 ''')
+
+    ok(contents=unit(unit_name='alala', command='echo 123'))
 
     # garbage
     fails(contents='fewfewf')
@@ -101,9 +107,12 @@ def unit(*, unit_name: str, command: Command) -> str:
 [Service]
 ExecStart=bash -c "{command}"
 # StandardOutput=file:/L/tmp/alala.log
+Systemdtab=true
 
 [Unit]
 OnFailure=status-email@%n.service
+Requires=systemdtab.target
+
 '''
     # TODO not sure if should include username??
     return res
@@ -129,8 +138,8 @@ DIR = Path("~/.config/systemd/user").expanduser()
 
 
 
-def scu(*args, **kwargs):
-    check_call(['systemctl', '--user', *args], **kwargs) # TODO status???
+def scu(*args, method=check_call, **kwargs):
+    return method(['systemctl', '--user', *args], **kwargs) # TODO status???
 
 
 def write_unit(*, unit_name: str, contents: str) -> None:
@@ -152,6 +161,8 @@ def prepare():
     shutil.copy2(src, target)
     # TODO ln maybe?..
 
+    # TODO set a very high nice value? not sure
+    # TODO need to make sure logs are preserved?
     X = f'''
 [Unit]
 Description=status email for %i to {user}
@@ -176,29 +187,28 @@ def finalize():
 # TODO think about arg names?
 # TODO not sure if should give it default often?
 # TODO when first? so it's more compat to crontab..
-def job(when: When, command: Command, *, unit_name: Optional[str]=None):
+def job(when: Optional[When], command: Command, *, unit_name: Optional[str]=None):
+    """
+    when: if None, then timer won't be created (still allows running job manually)
+
+    """
     assert unit_name is not None
     # TODO generate unit name
     # TODO not sure about names.
     # I guess warn user about non-unique names and prompt to give a more specific name?
     u = unit(unit_name=unit_name, command=command)
-
-    t = timer(unit_name=unit_name, when=when)
-    # TODO would be nice to revert....
-    # TODO assert that managed by systemdtab
-    # TODO name it systemdsl?
-    # TODO not sure what rollback should do w.r.t to
-    # TODO perhaps, only reenable changed ones? ugh. makes it trickier...
     write_unit(unit_name=unit_name, contents=u)
 
-    utimer = unit_name + '.timer'
-    (DIR / utimer).write_text(t)
+    if when is not None:
+        t = timer(unit_name=unit_name, when=when)
+        utimer = unit_name + '.timer'
+        (DIR / utimer).write_text(t)
+        scu('start', utimer)
+    # TODO otherwise just unit status or something?
+
     # TODO FIXME enable?
     # TODO verify everything before starting to update
     # TODO copy files with rollback? not sure how easy it is..
-    scu('start', utimer)
-    # scu('status', utimer)
-    scu('list-timers', '--all')
 
 
 
@@ -212,10 +222,29 @@ def test():
     # )
     pass
 
+import argparse
 
 def main():
     # TODO not sure if should use main?
-    pass
+    # scu list-unit-files --no-pager --no-legend
+    p = argparse.ArgumentParser()
+    sp = p.add_subparsers(dest='mode')
+    m = sp.add_parser('managed')
+    args = p.parse_args()
+
+    mode = args.mode; assert mode is not None
+
+    if mode == 'managed':
+        res = scu('list-unit-files', '--no-pager', '--no-legend', method=check_output).decode('utf8')
+        units = [x.split()[0] for x in res.splitlines()]
+        for u in units:
+            # meh. but couldn't find any better way to filter a subset of systemd properties...
+            # e.g. sc show only displays 'known' properties.
+            # could filter by description? but bit too restrictive?
+            res = scu('cat', u, method=check_output).decode('utf8')
+            if 'Systemdtab=true' in res:
+                print(u)
+
 
 
 if __name__ == '__main__':
@@ -229,3 +258,9 @@ if __name__ == '__main__':
 
 
 # TODO test via systemd??
+
+# TODO would be nice to revert... via contextmanager?
+# TODO assert that managed by systemdtab
+# TODO name it systemdsl?
+# TODO not sure what rollback should do w.r.t to
+# TODO perhaps, only reenable changed ones? ugh. makes it trickier...
