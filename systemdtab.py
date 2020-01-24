@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 import getpass
 from pathlib import Path
+import os
 import shutil
 from subprocess import check_call, CalledProcessError, run, PIPE, check_output
 from typing import NamedTuple, Union, Sequence, Optional
@@ -143,6 +144,10 @@ def scu(*args, method=check_call, **kwargs):
     return method(['systemctl', '--user', *args], **kwargs) # TODO status???
 
 
+def sscu(*args):
+    return ['systemctl', '--user', *args]
+
+
 def write_unit(*, unit_file: str, contents: str) -> None:
     # TODO contextmanager?
     verify(unit_file=unit_file, contents=contents)
@@ -209,16 +214,7 @@ def job(when: Optional[When], command: Command, *, unit_name: Optional[str]=None
     # TODO copy files with rollback? not sure how easy it is..
 
 
-
-
-
-def test():
-    # TODO 'fake' systemd dir?
-    # job(
-    #     # cmd=, # TODO allow taking lists and strings?
-
-    # )
-    pass
+# TODO test with 'fake' systemd dir?
 
 import argparse
 
@@ -227,7 +223,8 @@ def main():
     # scu list-unit-files --no-pager --no-legend
     p = argparse.ArgumentParser()
     sp = p.add_subparsers(dest='mode')
-    m = sp.add_parser('managed')
+    sp.add_parser('managed')
+    sp.add_parser('timers')
     args = p.parse_args()
 
     mode = args.mode; assert mode is not None
@@ -242,6 +239,10 @@ def main():
             res = scu('cat', u, method=check_output).decode('utf8')
             if 'Systemdtab=true' in res:
                 print(u)
+    elif mode == 'timers':
+        os.execvp('watch', ['watch', '-n', '0.5', ' '.join(sscu('list-timers'))])
+
+
 
 
 
@@ -262,3 +263,6 @@ if __name__ == '__main__':
 # TODO name it systemdsl?
 # TODO not sure what rollback should do w.r.t to
 # TODO perhaps, only reenable changed ones? ugh. makes it trickier...
+
+# TODO wonder if I remove timers, do they drop counts?
+# TODO FIXME ok, for now, it's fine, but with more sophisticated timers might be a bit annoying
