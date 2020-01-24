@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
+import getpass
 from pathlib import Path
-from subprocess import check_call
+import shutil
+from subprocess import check_call, CalledProcessError
 from typing import NamedTuple, Union, Sequence, Optional
 
 
@@ -56,13 +58,23 @@ def verify(*, unit_name: str, contents: str):
         check_call(['systemd-analyze', '--user', 'verify', str(sfile)])
 
 
+def test_verify():
+    import pytest
+    with pytest.raises(CalledProcessError):
+        verify(unit_name='whatever.service', contents='fewfewf')
+    pass
+
+
 def unit(*, unit_name: str, command: Command) -> str:
     # TODO allow to pass extra args
+    # TODO FIXME think carefully about escaping etc?
     res = f'''
 # managed by systemdtab
 # TODO description unnecessary?
 [Service]
-ExecStart={command}
+ExecStart=bash -c "{command}"
+
+[Unit]
 OnFailure=status-email@%n.service
 '''
     # TODO not sure if should include username??
@@ -96,6 +108,7 @@ def scu(*args, **kwargs):
 def write_unit(*, unit_name: str, contents: str) -> None:
     # TODO contextmanager?
     verify(unit_name=unit_name, contents=contents)
+    # TODO eh?
 
     uservice = unit_name + '.service'
     (DIR / uservice).write_text(contents)
@@ -103,18 +116,25 @@ def write_unit(*, unit_name: str, contents: str) -> None:
 
 def prepare():
     # TODO automatically email to user? I guess make sense..
-    import getpass
     user = getpass.getuser()
+    # TODO atomic write?
+    src = Path(__file__).absolute().parent / 'systemd-email'
+    target = Path('~/.local/bin/systemd-email').expanduser()
+    target.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(src, target)
+    # TODO ln maybe?..
+
     X = f'''
 [Unit]
 Description=status email for %i to {user}
 
 [Service]
 Type=oneshot
-ExecStart=/home/karlicos/bin/systemd-email {user} %i
+ExecStart={target} {user} %i
 User=nobody
 Group=systemd-journal
 '''
+    # TODO copy the file to local??
     write_unit(unit_name=f'status-email@', contents=X)
     # I guess makes sense to reaload here; fairly atomic step
     scu('daemon-reload')
@@ -137,6 +157,8 @@ def job(when: When, command: Command, *, unit_name: Optional[str]=None):
     # TODO name it systemdsl?
     # TODO not sure what rollback should do w.r.t to
     # TODO perhaps, only reenable changed ones? ugh. makes it trickier...
+    write_unit(unit_name=unit_name, contents=u)
+
     utimer = unit_name + '.timer'
     (DIR / utimer).write_text(t)
     # TODO FIXME enable?

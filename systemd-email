@@ -1,0 +1,22 @@
+#!/bin/bash -eux
+
+CMD="systemctl --user status --full $2"
+
+set +e
+STATUS="$($CMD)"
+set -e
+
+# TODO indicate if it failed?
+# TODO suggest how to inspect logs, include tail or link??
+# TODO ugh!
+sendmail -t <<ERRMAIL
+To: $1
+From: systemd <root@$HOSTNAME>
+Subject: $2
+Content-Transfer-Encoding: 8bit
+Content-Type: text/plain; charset=UTF-8
+
+$CMD
+
+$STATUS
+ERRMAIL
