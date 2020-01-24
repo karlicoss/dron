@@ -4,7 +4,7 @@ from pathlib import Path
 import os
 import shutil
 from subprocess import check_call, CalledProcessError, run, PIPE, check_output
-from typing import NamedTuple, Union, Sequence, Optional
+from typing import NamedTuple, Union, Sequence, Optional, Iterator
 
 
 # TODO timer spec?
@@ -33,13 +33,20 @@ class Timer(NamedTuple):
 # TODO actually for me, stuff like 'hourly' makes little sense; I usually space out in time..
 When = str
 
+
+MANAGED_MARKER = 'Systemdtab=true'
+
+def is_managed(body: str):
+    return MANAGED_MARKER in body
+
+
 # TODO how to come up with good implicit job name?
 def timer(*, unit_name: str, when: When) -> str:
     return f'''
 # managed by systemdtab
 [Unit]
 Description=Timer for {unit_name}
-Systemdtab=true
+{MANAGED_MARKER}
 
 [Timer]
 OnCalendar={when}
@@ -50,6 +57,18 @@ PathIsh = Union[str, Path]
 Command = Union[PathIsh, Sequence[PathIsh]]
 
 from tempfile import NamedTemporaryFile, TemporaryDirectory
+
+
+def test_managed():
+    assert is_managed(timer(unit_name='whatever', when='daily'))
+
+    custom = '''
+[Service]
+ExecStart=echo 123
+'''
+    verify(unit_file='other.service', contents=custom) # precondition
+    assert not is_managed(custom)
+
 
 def verify(*, unit_file: str, contents: str):
     # TODO ugh pipe doesn't work??
@@ -109,7 +128,7 @@ def unit(*, unit_name: str, command: Command) -> str:
 [Service]
 ExecStart=bash -c "{command}"
 # StandardOutput=file:/L/tmp/alala.log
-Systemdtab=true
+{MANAGED_MARKER}
 
 [Unit]
 OnFailure=status-email@%n.service
@@ -218,6 +237,20 @@ def job(when: Optional[When], command: Command, *, unit_name: Optional[str]=None
 
 import argparse
 
+
+def managed() -> Iterator[str]:
+    res = scu('list-unit-files', '--no-pager', '--no-legend', method=check_output).decode('utf8')
+    units = [x.split()[0] for x in res.splitlines()]
+    for u in units:
+        # meh. but couldn't find any better way to filter a subset of systemd properties...
+        # e.g. sc show only displays 'known' properties.
+        # could filter by description? but bit too restrictive?
+        res = scu('cat', u, method=check_output).decode('utf8')
+        if is_managed(res):
+            yield res
+
+
+
 def main():
     # TODO not sure if should use main?
     # scu list-unit-files --no-pager --no-legend
@@ -230,15 +263,8 @@ def main():
     mode = args.mode; assert mode is not None
 
     if mode == 'managed':
-        res = scu('list-unit-files', '--no-pager', '--no-legend', method=check_output).decode('utf8')
-        units = [x.split()[0] for x in res.splitlines()]
-        for u in units:
-            # meh. but couldn't find any better way to filter a subset of systemd properties...
-            # e.g. sc show only displays 'known' properties.
-            # could filter by description? but bit too restrictive?
-            res = scu('cat', u, method=check_output).decode('utf8')
-            if 'Systemdtab=true' in res:
-                print(u)
+        for u in managed():
+            print(u)
     elif mode == 'timers':
         os.execvp('watch', ['watch', '-n', '0.5', ' '.join(sscu('list-timers'))])
 
