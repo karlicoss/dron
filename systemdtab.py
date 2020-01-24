@@ -159,8 +159,9 @@ Description=status email for %i to {user}
 [Service]
 Type=oneshot
 ExecStart={target} {user} %i
-User=nobody
-Group=systemd-journal
+# TODO why these were suggested??
+# User=nobody
+# Group=systemd-journal
 '''
     # TODO copy the file to local??
     write_unit(unit_name=f'status-email@', contents=X)
