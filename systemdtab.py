@@ -100,8 +100,7 @@ def unit(*, unit_name: str, command: Command) -> str:
 # TODO description unnecessary?
 [Service]
 ExecStart=bash -c "{command}"
-StandardOutput=console
-StandardError=console
+# StandardOutput=file:/L/tmp/alala.log
 
 [Unit]
 OnFailure=status-email@%n.service

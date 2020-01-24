@@ -1,10 +1,19 @@
 #!/bin/bash -eux
 
-CMD="systemctl --user status --full $2"
+TO="$1"
+UNIT="$2"
+
+CMD="systemctl --user status --full $UNIT"
 
 set +e
 STATUS="$($CMD)"
 set -e
+
+# eh. not very atomic..
+
+TS="$(systemctl --user show -p ActiveEnterTimestamp --value "$UNIT")"
+LOGS="$(journalctl -u "$UNIT" --since "$TS")"
+
 
 # TODO FIXME make sure that we get some warning if the mailer itself fails?
 # systemctl --user show --value -p InvocationID systemdtab-test.service
@@ -13,13 +22,16 @@ set -e
 # TODO suggest how to inspect logs, include tail or link??
 # TODO ugh!
 sendmail -t <<ERRMAIL
-To: $1
+To: $TO
 From: systemd <root@$HOSTNAME>
-Subject: $2
+Subject: $UNIT
 Content-Transfer-Encoding: 8bit
 Content-Type: text/plain; charset=UTF-8
 
 $CMD
 
 $STATUS
+
+$LOGS
+
 ERRMAIL
