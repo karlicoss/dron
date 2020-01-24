@@ -2,7 +2,7 @@
 import getpass
 from pathlib import Path
 import shutil
-from subprocess import check_call, CalledProcessError
+from subprocess import check_call, CalledProcessError, run, PIPE
 from typing import NamedTuple, Union, Sequence, Optional
 
 
@@ -48,6 +48,7 @@ PathIsh = Union[str, Path]
 Command = Union[PathIsh, Sequence[PathIsh]]
 
 from tempfile import NamedTemporaryFile, TemporaryDirectory
+
 def verify(*, unit_name: str, contents: str):
     # TODO ugh pipe doesn't work??
 # systemd-analyze --user verify <(cat systemdtab-test.service)       I  18:58:02  
@@ -55,14 +56,40 @@ def verify(*, unit_name: str, contents: str):
     with TemporaryDirectory() as tdir:
         sfile = (Path(tdir) / unit_name).with_suffix('.service')
         sfile.write_text(contents)
-        check_call(['systemd-analyze', '--user', 'verify', str(sfile)])
+        res = run(['systemd-analyze', '--user', 'verify', str(sfile)], stdout=PIPE, stderr=PIPE)
+        res.check_returncode()
+        out = res.stdout
+        err = res.stderr
+        assert out == b'', out
+        assert err == b'', err
+        # TODO ugh. also make sure there is no output?
 
 
 def test_verify():
     import pytest
-    with pytest.raises(CalledProcessError):
-        verify(unit_name='whatever.service', contents='fewfewf')
-    pass
+    def fails(contents):
+        with pytest.raises(Exception):
+            verify(unit_name='whatever.service', contents=contents)
+
+    verify(unit_name='ok.service', contents='''
+[Service]
+ExecStart=echo 123
+''')
+
+    # garbage
+    fails(contents='fewfewf')
+
+    # no execstart
+    fails(contents='''
+[Service]
+StandardOutput=journal
+''')
+
+    fails(contents='''
+[Service]
+ExecStart=yes
+StandardOutput=baaad
+''')
 
 
 def unit(*, unit_name: str, command: Command) -> str:
@@ -73,6 +100,8 @@ def unit(*, unit_name: str, command: Command) -> str:
 # TODO description unnecessary?
 [Service]
 ExecStart=bash -c "{command}"
+StandardOutput=console
+StandardError=console
 
 [Unit]
 OnFailure=status-email@%n.service
@@ -140,6 +169,9 @@ Group=systemd-journal
     scu('daemon-reload')
 
 
+def finalize():
+    scu('daemon-reload')
+
 
 # TODO think about arg names?
 # TODO not sure if should give it default often?
@@ -194,3 +226,6 @@ if __name__ == '__main__':
 # TODO  systemd-analyze --user unit-paths 
 # TODO blame!
 #  systemd-analyze verify -- check syntax
+
+
+# TODO test via systemd??

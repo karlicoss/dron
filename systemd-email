@@ -6,6 +6,9 @@ set +e
 STATUS="$($CMD)"
 set -e
 
+# TODO FIXME make sure that we get some warning if the mailer itself fails?
+# systemctl --user show --value -p InvocationID systemdtab-test.service
+
 # TODO indicate if it failed?
 # TODO suggest how to inspect logs, include tail or link??
 # TODO ugh!
