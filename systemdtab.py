@@ -5,6 +5,7 @@ import getpass
 import os
 import sys
 from pathlib import Path
+import shlex
 import shutil
 from subprocess import check_call, CalledProcessError, run, PIPE, check_output
 from tempfile import NamedTemporaryFile, TemporaryDirectory
@@ -376,9 +377,9 @@ def apply_state(pending: State) -> None:
 
 
 def manage(jobs: Iterable[Job]) -> None:
+    prepare()
     st = state(jobs)
     # TOOD assert nonzero state?
-
     apply_state(st)
 
 
@@ -395,16 +396,38 @@ def edit():
         editor = 'nano'
 
     with TemporaryDirectory() as tdir:
-        tpath = Path(tdir) / 'systemdtab'
+        tpath = str(Path(tdir) / 'systemdtab')
         shutil.copy2(sdtab, tpath)
 
-        res = run([editor, str(tpath)])
-        res.check_returncode()
+        while True:
+            res = run([editor, tpath])
+            res.check_returncode()
 
-        # TODO prompt to edit again?
-        # check_call(['pylint', '-E'])
-
-        # TODO now, run mypy or something?
+            # TODO prompt to edit again?
+            # TODO how to allow these to be defined in tab file?
+            linters = [
+                ['pylint', '-E', tpath],
+                ['mypy', '--check-untyped', tpath],
+            ]
+            errors = False
+            for l in linters:
+                logger.info('Running: %s', ' '.join(map(shlex.quote, l)))
+                r = run(l)
+                if r.returncode == 0:
+                    logger.info('OK')
+                    continue
+                else:
+                    logger.error('FAIL: code: %d', r.returncode)
+                    errors = True
+            if not errors:
+                break
+            # TODO perhaps allow to carry on regardless? not sure..
+            # TODO after linting passed, try installing?
+            # not sure how much we can do without modifying anything...
+            if click.confirm('Had errors during linting. Try again?', default=True):
+                continue
+            else:
+                raise RuntimeError()
 
 
 
@@ -425,6 +448,7 @@ def main():
         os.execvp('watch', ['watch', '-n', '0.5', ' '.join(scu('list-timers', '--all'))])
     elif mode == 'edit':
         edit()
+    # TODO lint mode??
     else:
         raise RuntimeError(mode)
     # TODO need self install..
