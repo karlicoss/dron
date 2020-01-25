@@ -19,6 +19,7 @@ import click # type: ignore
 
 
 from kython.klogging2 import LazyLogger # type: ignore
+# TODO need bit less verbose logging
 
 
 logger = LazyLogger('systemdtab', level='debug')
@@ -393,9 +394,15 @@ def cmd_edit():
         tpath = Path(tdir) / 'systemdtab'
         shutil.copy2(sdtab, tpath)
 
+        orig_mtime = tpath.stat().st_mtime
         while True:
             res = run([editor, str(tpath)])
             res.check_returncode()
+
+            new_mtime = tpath.stat().st_mtime
+            if new_mtime == orig_mtime:
+                logger.warning('No notification made')
+                return
 
             try:
                 state = do_lint(tabfile=tpath)
@@ -407,9 +414,11 @@ def cmd_edit():
                     raise e
             else:
                 manage(state=state)
+                sdtab.write_text(tpath.read_text()) # handles symlinks correctly
+                logger.info("Wrote changes to %s. Don't forget to commit!", sdtab)
                 break
 
-        sdtab.write_text(tpath.read_text()) # this should handle symlinks correctly
+        # TODO show git diff?
         # TODO perhaps allow to carry on regardless? not sure..
         # not sure how much we can do without modifying anything...
 
