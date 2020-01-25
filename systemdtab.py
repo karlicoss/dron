@@ -112,19 +112,21 @@ def verify(*, unit_file: str, body: str):
         sfile = Path(tdir) / unit_file
         sfile.write_text(body)
         res = run(['systemd-analyze', '--user', 'verify', str(sfile)], stdout=PIPE, stderr=PIPE)
-        if res.returncode != 0:
-            raise RuntimeError(res)
+        # TODO ugh. even exit code 1 doesn't guarantee correct output??
         out = res.stdout
         err = res.stderr
         assert out == b'', out
         lines = err.splitlines()
         lines = [l for l in lines if b"Unknown lvalue 'Systemdtab'" not in l] # meh
-        if len(lines) != 0:
-            logger.error('while installing %s', unit_file)
-            for line in lines:
-                sys.stderr.write(line.decode('utf8') + '\n')
-            # TODO right, need to install service first...
-            raise RuntimeError(f"Failed to install {unit_file}")
+        if len(lines) == 0 and res.returncode == 0:
+            return
+
+        msg = f'failed checking {unit_file}, exit code {res.returncode}'
+        logger.error(msg)
+        for line in lines:
+            sys.stderr.write(line.decode('utf8') + '\n')
+            # TODO right, might need to install service first...
+        raise RuntimeError(msg)
 
 
 def test_verify():
