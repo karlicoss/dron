@@ -382,13 +382,38 @@ def manage(jobs: Iterable[Job]) -> None:
     apply_state(st)
 
 
+def edit():
+    sdtab = Path("~/.config/systemdtab").expanduser() # TODO not sure..
+    # TODO not sure what's a good way of opening editor and properly handling tty?
+    # TODO careful with symlinks?
+    # TODO after editing, need to apply?
+    assert sdtab.exists(), sdtab
+
+    editor = os.environ.get('EDITOR')
+    if editor is None:
+        logger.warning('No EDITOR! Fallback to nano')
+        editor = 'nano'
+
+    with TemporaryDirectory() as tdir:
+        tpath = Path(tdir) / 'systemdtab'
+        shutil.copy2(sdtab, tpath)
+
+        res = run([editor, str(tpath)])
+        res.check_returncode()
+
+        # TODO prompt to edit again?
+        # check_call(['pylint', '-E'])
+
+        # TODO now, run mypy or something?
+
+
+
 def main():
-    # TODO not sure if should use main?
-    # scu list-unit-files --no-pager --no-legend
     p = argparse.ArgumentParser()
     sp = p.add_subparsers(dest='mode')
     sp.add_parser('managed')
     sp.add_parser('timers')
+    sp.add_parser('edit')
     args = p.parse_args()
 
     mode = args.mode; assert mode is not None
@@ -398,6 +423,8 @@ def main():
             print(u)
     elif mode == 'timers':
         os.execvp('watch', ['watch', '-n', '0.5', ' '.join(scu('list-timers', '--all'))])
+    elif mode == 'edit':
+        edit()
     else:
         raise RuntimeError(mode)
     # TODO need self install..
