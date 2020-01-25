@@ -407,6 +407,7 @@ def cmd_edit():
                     raise e
             else:
                 manage(state=state)
+                break
 
         sdtab.write_text(tpath.read_text()) # this should handle symlinks correctly
         # TODO perhaps allow to carry on regardless? not sure..
