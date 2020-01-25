@@ -186,7 +186,7 @@ Description=status email for %i to {user}
 
 [Service]
 Type=oneshot
-ExecStart={target} {user} %i "-o cat"
+ExecStart={target} --to {user} --unit %i --journalctl-args "-o cat"
 # TODO why these were suggested??
 # User=nobody
 # Group=systemd-journal

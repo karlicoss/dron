@@ -4,8 +4,9 @@ import argparse
 import os
 import io
 import socket
-from typing import Iterator
-from subprocess import Popen, check_call, run, PIPE
+from typing import Iterator, Optional
+import shlex
+from subprocess import Popen, check_call, check_output, run, PIPE
 
 
 # TODO could just pipe?
@@ -17,8 +18,13 @@ def send(payload: Iterator[bytes]):
     r.check_returncode()
 
 
-def payload(*, to: str, unit: str, jctl_args: str) -> Iterator[bytes]:
+def scu(*args):
+    return ['systemctl', '--user', *args]
+
+
+def payload(*, to: str, unit: str, journalctl_args: Optional[str]) -> Iterator[bytes]:
     hostname = socket.gethostname()
+    # TODO think about subject..
     yield f'''
 To: {to}
 From: systemd <root@{hostname}>
@@ -27,75 +33,41 @@ Content-Transfer-Encoding: 8bit
 Content-Type: text/plain; charset=UTF-8
 '''.lstrip().encode('utf8')
 
-    r = run(['systemctl', '--user', 'status', '--full', unit], stdout=PIPE, stderr=PIPE)
+    # TODO shorter status?
+    r = run(scu('status', '--lines', '0', unit), stdout=PIPE, stderr=PIPE)
     # status returns non-zero code if the unit failed, so need to ignore failures..
     # TODO check return code?
     yield r.stdout # TODO not sure which one should keep?
 
-    pass
+    # TODO make defensive and send everything in email?
+    TS = check_output(scu('show', '-p', 'ActiveEnterTimestamp', '--value', unit)).decode('utf8').strip()
+
+    # TODO shlex?? ugh
+    jargs = [] if journalctl_args is None else journalctl_args.split()
+    LCMD = ['journalctl', '--user', '-u', unit, '--since', TS, *jargs]
+    yield ' '.join(shlex.quote(x) for x in LCMD).encode('utf8') # meh
+    yield b''
+    yield check_output(LCMD)
 
 
 def main():
     from argparse import ArgumentParser
     p = ArgumentParser()
-    p.add_argument('to')
-    p.add_argument('unit')
-    p.add_argument('jctl_args')
+    p.add_argument('--to', required=True)
+    p.add_argument('--unit', required=True)
+    p.add_argument('--journalctl-args', default=None)
     args = p.parse_args()
 
-    pl = payload(to=args.to, unit=args.unit, jctl_args=args.jctl_args)
+    pl = payload(to=args.to, unit=args.unit, journalctl_args=args.journalctl_args)
     send(payload=pl)
 
 
 if __name__ == '__main__':
    main()
 
-
-#!/bin/bash -eux
-# 
-# TO="$1"
-# UNIT="$2"
-# JOURNALCTL_ARGS="$3"
-# 
-# # TODO shorter status?
-# CMD="systemctl --user status --full $UNIT"
-# 
-# # status returns non-zero code if the unit failed, so need to life -e for it
-# set +e
-# STATUS="$($CMD)"
-# set -e
-# 
 # # eh. not very atomic..
-# 
-# TS="$(systemctl --user show -p ActiveEnterTimestamp --value "$UNIT")"
-# LOGCMD="journalctl -u \"$UNIT\" --since \\'$TS\\'"
-# LOGS="$(${LOGCMD[@]})" # $JOURNALCTL_ARGS)"
-# 
-# 
 # # TODO FIXME make sure that we get some warning if the mailer itself fails?
 # # systemctl --user show --value -p InvocationID systemdtab-test.service
-# 
 # # TODO indicate if it failed?
 # # TODO suggest how to inspect logs, include tail or link??
 # # TODO ugh!
-# sendmail -t <<ERRMAIL
-# To: $TO
-# From: systemd <root@$HOSTNAME>
-# Subject: $UNIT
-# Content-Transfer-Encoding: 8bit
-# Content-Type: text/plain; charset=UTF-8
-# 
-# $CMD
-# 
-# $STATUS
-# 
-# TS:
-# $TS
-# 
-# Logs:
-# $LOGCMD
-# $LOGS
-# 
-# ERRMAIL
-
-
