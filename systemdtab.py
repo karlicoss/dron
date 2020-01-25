@@ -6,7 +6,7 @@ from pathlib import Path
 import shutil
 from subprocess import check_call, CalledProcessError, run, PIPE, check_output
 from tempfile import NamedTemporaryFile, TemporaryDirectory
-from typing import NamedTuple, Union, Sequence, Optional, Iterator, Tuple, Iterable
+from typing import NamedTuple, Union, Sequence, Optional, Iterator, Tuple, Iterable, List
 
 
 from kython.klogging2 import LazyLogger # type: ignore
@@ -63,9 +63,22 @@ OnCalendar={when}
 
 
 Command = Union[PathIsh, Sequence[PathIsh]]
+
+def ncmd(command: Command) -> List[str]:
+    if isinstance(command, (str, Path)):
+        return ncmd([command])
+    else:
+        return [str(c) for c in command]
+
+
+
 # TODO allow to pass extra args
 def service(*, unit_name: str, command: Command) -> str:
     # TODO FIXME think carefully about escaping command etc?
+    nc = ncmd(command)
+    # TODO not sure how to handle this properly...
+    cmd = ' '.join(nc)
+
     res = f'''
 # managed by systemdtab
 [Unit]
@@ -73,7 +86,7 @@ Description=Service for {unit_name}
 OnFailure=status-email@%n.service
 
 [Service]
-ExecStart=bash -c "{command}"
+ExecStart={cmd}
 # StandardOutput=file:/L/tmp/alala.log
 {MANAGED_MARKER}
 '''
@@ -89,7 +102,8 @@ def verify(*, unit_file: str, body: str):
         sfile = Path(tdir) / unit_file
         sfile.write_text(body)
         res = run(['systemd-analyze', '--user', 'verify', str(sfile)], stdout=PIPE, stderr=PIPE)
-        res.check_returncode()
+        if res.returncode != 0:
+            raise RuntimeError(res)
         out = res.stdout
         err = res.stderr
         assert out == b'', out
@@ -287,6 +301,8 @@ def main():
     else:
         raise RuntimeError(mode)
     # TODO need self install..
+    # TODO add edit command; open sdtab file in EDITOR; lint if necessary (link commands specified in the file)
+    # after linting, carry on to applying
 
 
 if __name__ == '__main__':
@@ -304,6 +320,7 @@ if __name__ == '__main__':
 # TODO would be nice to revert... via contextmanager?
 # TODO assert that managed by systemdtab
 # TODO name it systemdsl?
+# sdcron? sdtab?
 # TODO not sure what rollback should do w.r.t to
 # TODO perhaps, only reenable changed ones? ugh. makes it trickier...
 
@@ -352,3 +369,5 @@ if __name__ == '__main__':
 # TODO the assumption is that managed jobs are not changed manually, or changed in a way that doesn't break anything
 # in general it's impossible to prevent anyway
 
+
+# TODO change log formats for emails? not that I really need pids..
