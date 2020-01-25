@@ -17,12 +17,15 @@ from typing import NamedTuple, Union, Sequence, Optional, Iterator, Tuple, Itera
 # TODO not sure about click..
 import click # type: ignore
 
-
-from kython.klogging2 import LazyLogger # type: ignore
-# TODO need bit less verbose logging
-
-
-logger = LazyLogger('systemdtab', level='debug')
+ # TODO
+try:
+    from kython.klogging2 import LazyLogger # type: ignore
+except ImportError:
+    import logging
+    logger = logging.getLogger('systemdtab')
+else:
+    # TODO need bit less verbose logging
+    logger = LazyLogger('systemdtab', level='debug')
 
 DIR = Path("~/.config/systemd/user").expanduser()
 # TODO FIXME mkdir in case it doesn't exist..
@@ -31,8 +34,11 @@ DIR = Path("~/.config/systemd/user").expanduser()
 PathIsh = Union[str, Path]
 
 
-# def scu(*args, method=check_call, **kwargs):
-#     return method(['systemctl', '--user', *args], **kwargs) # TODO status???
+def skip_if_ci(reason: str):
+    if 'CI' in os.environ:
+        import pytest # type: ignore
+        pytest.skip("Can't run this on CI: " + reason)
+
 
 def scu(*args):
     return ['systemctl', '--user', *args]
@@ -49,6 +55,7 @@ def is_managed(body: str):
 
 
 def test_managed():
+    skip_if_ci('no systemctl')
     assert is_managed(timer(unit_name='whatever', when='daily'))
 
     custom = '''
@@ -134,6 +141,7 @@ def verify(*, unit_file: str, body: str):
 
 
 def test_verify():
+    skip_if_ci('no systemctl')
     import pytest # type: ignore[import]
     def fails(body):
         with pytest.raises(Exception):
@@ -465,6 +473,7 @@ def lint(tabfile: Path) -> Iterator[Union[Exception, State]]:
 
 
 def test_do_lint(tmp_path):
+    skip_if_ci('no systemctl')
     import pytest
     def ok(body: str):
         tpath = Path(tmp_path) / 'sdtab'
