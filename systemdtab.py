@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import argparse
+from difflib import unified_diff
 import getpass
 import os
 from pathlib import Path
@@ -217,7 +218,13 @@ def managed_units() -> State:
         # meh. but couldn't find any better way to filter a subset of systemd properties...
         # e.g. sc show only displays 'known' properties.
         # could filter by description? but bit too restrictive?
+
         res = check_output(scu('cat', u)).decode('utf8')
+        # ugh. systemctl cat adds some annoying header...
+        lines = res.splitlines(keepends=True)
+        assert lines[0].startswith('# ')
+        res = ''.join(lines[1:])
+
         if is_managed(res):
             yield u, res
 
@@ -284,6 +291,7 @@ def compute_plan(*, current: State, pending: State) -> Plan:
         in_pen = u in pendingd
         if in_cur:
             if in_pen:
+                # TODO not even sure I should emit it if bodies match??
                 yield Update(unit_file=u, old_body=currentd[u], new_body=pendingd[u])
             else:
                 yield Delete(unit_file=u)
@@ -327,11 +335,18 @@ def apply_state(pending: State) -> None:
         (DIR / a.unit_file).unlink() # TODO eh. not sure what do we do with user modifications?
 
     for a in updates:
+        if a.old_body == a.new_body:
+            continue
+        diff = unified_diff(a.old_body.splitlines(), a.new_body.splitlines())
+        for d in diff:
+            logger.warning(d)
+
         assert a.old_body == a.new_body, a # TODO
 
     # TODO more logging?
 
     for a in adds:
+        # TODO when we add, assert that previous unit wasn't managed? otherwise we overwrite something
         write_unit(unit_file=a.unit_file, body=a.body)
 
     reload()
