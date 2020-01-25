@@ -3,6 +3,7 @@ import argparse
 from difflib import unified_diff
 import getpass
 import os
+import sys
 from pathlib import Path
 import shutil
 from subprocess import check_call, CalledProcessError, run, PIPE, check_output
@@ -334,18 +335,20 @@ def apply_state(pending: State) -> None:
     for a in deletes:
         (DIR / a.unit_file).unlink() # TODO eh. not sure what do we do with user modifications?
 
+    # TODO not sure how to support 'dirty' units detection...
     for a in updates:
-        if a.old_body == a.new_body:
+        diff = list(unified_diff(a.old_body.splitlines(keepends=True), a.new_body.splitlines(keepends=True)))
+        if len(diff) == 0:
             continue
-        diff = unified_diff(a.old_body.splitlines(), a.new_body.splitlines())
+        logger.info('Updating %s', a.unit_file)
         for d in diff:
-            logger.warning(d)
-
-        assert a.old_body == a.new_body, a # TODO
+            sys.stderr.write(d)
+        write_unit(unit_file=a.unit_file, body=a.new_body)
 
     # TODO more logging?
 
     for a in adds:
+        logger.info('Adding %s', a.unit_file)
         # TODO when we add, assert that previous unit wasn't managed? otherwise we overwrite something
         write_unit(unit_file=a.unit_file, body=a.body)
 
