@@ -6,8 +6,13 @@ from pathlib import Path
 import shutil
 from subprocess import check_call, CalledProcessError, run, PIPE, check_output
 from tempfile import NamedTemporaryFile, TemporaryDirectory
-from typing import NamedTuple, Union, Sequence, Optional, Iterator
+from typing import NamedTuple, Union, Sequence, Optional, Iterator, Tuple, Iterable
 
+
+from kython.klogging2 import LazyLogger # type: ignore
+
+
+logger = LazyLogger('systemdtab', level='debug')
 
 DIR = Path("~/.config/systemd/user").expanduser()
 # TODO FIXME mkdir in case it doesn't exist..
@@ -39,7 +44,7 @@ def test_managed():
 [Service]
 ExecStart=echo 123
 '''
-    verify(unit_file='other.service', contents=custom) # precondition
+    verify(unit_file='other.service', body=custom) # precondition
     assert not is_managed(custom)
 
 
@@ -76,13 +81,13 @@ ExecStart=bash -c "{command}"
     return res
 
 
-def verify(*, unit_file: str, contents: str):
+def verify(*, unit_file: str, body: str):
     # ugh. pipe doesn't work??
     # systemd-analyze --user verify <(cat systemdtab-test.service)
     # Failed to prepare filename /proc/self/fd/11: Invalid argument
     with TemporaryDirectory() as tdir:
         sfile = Path(tdir) / unit_file
-        sfile.write_text(contents)
+        sfile.write_text(body)
         res = run(['systemd-analyze', '--user', 'verify', str(sfile)], stdout=PIPE, stderr=PIPE)
         res.check_returncode()
         out = res.stdout
@@ -95,41 +100,43 @@ def verify(*, unit_file: str, contents: str):
 
 def test_verify():
     import pytest # type: ignore[import]
-    def fails(contents):
+    def fails(body):
         with pytest.raises(Exception):
-            verify(unit_file='whatever.service', contents=contents)
+            verify(unit_file='whatever.service', body=body)
 
-    def ok(contents):
-        verify(unit_file='ok.service', contents=contents)
+    def ok(body):
+        verify(unit_file='ok.service', body=body)
 
-    ok(contents='''
+    ok(body='''
 [Service]
 ExecStart=echo 123
 ''')
 
-    ok(contents=service(unit_name='alala', command='echo 123'))
+    ok(body=service(unit_name='alala', command='echo 123'))
 
     # garbage
-    fails(contents='fewfewf')
+    fails(body='fewfewf')
 
     # no execstart
-    fails(contents='''
+    fails(body='''
 [Service]
 StandardOutput=journal
 ''')
 
-    fails(contents='''
+    fails(body='''
 [Service]
 ExecStart=yes
 StandardOutput=baaad
 ''')
 
 
-def write_unit(*, unit_file: str, contents: str) -> None:
+def write_unit(*, unit_file: str, body: str) -> None:
+    logger.debug('writing unit file: %s', unit_file)
     # TODO contextmanager?
-    verify(unit_file=unit_file, contents=contents)
+    # I guess doesn't hurt doing it twice?
+    verify(unit_file=unit_file, body=body)
     # TODO eh?
-    (DIR / unit_file).write_text(contents)
+    (DIR / unit_file).write_text(body)
 
 
 def prepare():
@@ -156,39 +163,32 @@ ExecStart={target} {user} %i
 # Group=systemd-journal
 '''
     # TODO copy the file to local??
-    write_unit(unit_file=f'status-email@.service', contents=X)
+    write_unit(unit_file=f'status-email@.service', body=X)
     # I guess makes sense to reload here; fairly atomic step
     reload()
 
 
-def finalize():
-    reload()
-
+class Job(NamedTuple):
+    when: Optional[When]
+    command: Command
+    unit_name: str
 
 # TODO think about arg names?
 # TODO not sure if should give it default often?
 # TODO when first? so it's more compat to crontab..
-def job(when: Optional[When], command: Command, *, unit_name: Optional[str]=None):
+def job(when: Optional[When], command: Command, *, unit_name: Optional[str]=None) -> Job:
     """
     when: if None, then timer won't be created (still allows running job manually)
 
     """
     assert unit_name is not None
-    # TODO generate unit name
-    # TODO not sure about names.
+    # TODO later, autogenerate unit name
     # I guess warn user about non-unique names and prompt to give a more specific name?
-    s = service(unit_name=unit_name, command=command)
-    write_unit(unit_file=unit_name + '.service', contents=s)
-
-    if when is not None:
-        t = timer(unit_name=unit_name, when=when)
-        write_unit(unit_file=unit_name + '.timer', contents=t)
-        check_call(scu('start', unit_name + '.timer'))
-    # TODO otherwise just unit status or something?
-
-    # TODO FIXME enable?
-    # TODO verify everything before starting to update
-    # TODO copy files with rollback? not sure how easy it is..
+    return Job(
+        when=when,
+        command=command,
+        unit_name=unit_name,
+    )
 
 
 
@@ -203,6 +203,53 @@ def managed_units() -> Iterator[str]:
         if is_managed(res):
             yield res
 
+Unit = str
+Body = str
+Plan = Iterable[Tuple[Unit, Body]]
+
+def plan(jobs: Iterable[Job]) -> Plan:
+    def check(unit_file, body):
+        verify(unit_file=unit_file, body=body)
+        return (unit_file, body)
+
+    for j in jobs:
+        s = service(unit_name=j.unit_name, command=j.command)
+        yield check(j.unit_name + '.service', s)
+        # write_unit(unit_file=j.unit_name + '.service', contents=s) T
+
+        when = j.when
+        if when is None:
+            continue
+        t = timer(unit_name=j.unit_name, when=when)
+        yield check(j.unit_name + '.timer', t)
+
+        # write_unit(unit_file=unit_name + '.timer', contents=t)
+        # TODO not sure what should be started? timers only I suppose
+        # check_call(scu('start', unit_name + '.timer'))
+    # TODO otherwise just unit status or something?
+
+    # TODO FIXME enable?
+    # TODO verify everything before starting to update
+    # TODO copy files with rollback? not sure how easy it is..
+
+
+
+def apply_plan(pjobs: Plan) -> None:
+    plist = list(pjobs)
+
+    # TODO FIXME logging...
+    # TODO FIXME undo first?
+    for unit_file, body in plist:
+        write_unit(unit_file=unit_file, body=body)
+
+    reload()
+
+
+def manage(jobs: Iterable[Job]) -> None:
+    pjobs = plan(jobs)
+    # TOOD assert nonzero plan?
+
+    apply_plan(pjobs)
 
 
 def main():
@@ -221,6 +268,9 @@ def main():
             print(u)
     elif mode == 'timers':
         os.execvp('watch', ['watch', '-n', '0.5', ' '.join(scu('list-timers'))])
+    else:
+        raise RuntimeError(mode)
+    # TODO need self install..
 
 
 if __name__ == '__main__':
@@ -281,3 +331,8 @@ if __name__ == '__main__':
 
 
 # TODO test with 'fake' systemd dir?
+
+
+# TODO the assumption is that managed jobs are not changed manually, or changed in a way that doesn't break anything
+# in general it's impossible to prevent anyway
+
