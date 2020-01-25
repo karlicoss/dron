@@ -1,37 +1,101 @@
-#!/bin/bash -eux
-
-TO="$1"
-UNIT="$2"
-
-CMD="systemctl --user status --full $UNIT"
-
-set +e
-STATUS="$($CMD)"
-set -e
-
-# eh. not very atomic..
-
-TS="$(systemctl --user show -p ActiveEnterTimestamp --value "$UNIT")"
-LOGS="$(journalctl -u "$UNIT" --since "$TS")"
+#!/usr/bin/env python3
+# ugh. I just need some variable substitution; why is bash so shit?
+import argparse
+import os
+import io
+import socket
+from typing import Iterator
+from subprocess import Popen, check_call, run, PIPE
 
 
-# TODO FIXME make sure that we get some warning if the mailer itself fails?
-# systemctl --user show --value -p InvocationID systemdtab-test.service
+# TODO could just pipe?
+def send(payload: Iterator[bytes]):
+    # TODO can we exec into it?
+    # TODO ideally we want to iterate though output?
+    pl = b'\n'.join(payload) # TODO FIXME
+    r = run(['sendmail', '-t'], input=pl)
+    r.check_returncode()
 
-# TODO indicate if it failed?
-# TODO suggest how to inspect logs, include tail or link??
-# TODO ugh!
-sendmail -t <<ERRMAIL
-To: $TO
-From: systemd <root@$HOSTNAME>
-Subject: $UNIT
+
+def payload(*, to: str, unit: str, jctl_args: str) -> Iterator[bytes]:
+    hostname = socket.gethostname()
+    yield f'''
+To: {to}
+From: systemd <root@{hostname}>
+Subject: {unit}
 Content-Transfer-Encoding: 8bit
 Content-Type: text/plain; charset=UTF-8
+'''.lstrip().encode('utf8')
 
-$CMD
+    r = run(['systemctl', '--user', 'status', '--full', unit], stdout=PIPE, stderr=PIPE)
+    # status returns non-zero code if the unit failed, so need to ignore failures..
+    # TODO check return code?
+    yield r.stdout # TODO not sure which one should keep?
 
-$STATUS
+    pass
 
-$LOGS
 
-ERRMAIL
+def main():
+    from argparse import ArgumentParser
+    p = ArgumentParser()
+    p.add_argument('to')
+    p.add_argument('unit')
+    p.add_argument('jctl_args')
+    args = p.parse_args()
+
+    pl = payload(to=args.to, unit=args.unit, jctl_args=args.jctl_args)
+    send(payload=pl)
+
+
+if __name__ == '__main__':
+   main()
+
+
+#!/bin/bash -eux
+# 
+# TO="$1"
+# UNIT="$2"
+# JOURNALCTL_ARGS="$3"
+# 
+# # TODO shorter status?
+# CMD="systemctl --user status --full $UNIT"
+# 
+# # status returns non-zero code if the unit failed, so need to life -e for it
+# set +e
+# STATUS="$($CMD)"
+# set -e
+# 
+# # eh. not very atomic..
+# 
+# TS="$(systemctl --user show -p ActiveEnterTimestamp --value "$UNIT")"
+# LOGCMD="journalctl -u \"$UNIT\" --since \\'$TS\\'"
+# LOGS="$(${LOGCMD[@]})" # $JOURNALCTL_ARGS)"
+# 
+# 
+# # TODO FIXME make sure that we get some warning if the mailer itself fails?
+# # systemctl --user show --value -p InvocationID systemdtab-test.service
+# 
+# # TODO indicate if it failed?
+# # TODO suggest how to inspect logs, include tail or link??
+# # TODO ugh!
+# sendmail -t <<ERRMAIL
+# To: $TO
+# From: systemd <root@$HOSTNAME>
+# Subject: $UNIT
+# Content-Transfer-Encoding: 8bit
+# Content-Type: text/plain; charset=UTF-8
+# 
+# $CMD
+# 
+# $STATUS
+# 
+# TS:
+# $TS
+# 
+# Logs:
+# $LOGCMD
+# $LOGS
+# 
+# ERRMAIL
+
+
