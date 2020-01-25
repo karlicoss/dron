@@ -157,7 +157,7 @@ def prepare():
     # TODO automatically email to user? I guess make sense..
     user = getpass.getuser()
     # TODO atomic write?
-    src = Path(__file__).absolute().parent / 'systemd-email'
+    src = Path(__file__).absolute().resolve().parent / 'systemd-email'
     target = Path('~/.local/bin/systemd-email').expanduser()
     target.parent.mkdir(parents=True, exist_ok=True)
     shutil.copy2(src, target)
@@ -205,8 +205,12 @@ def job(when: Optional[When], command: Command, *, unit_name: Optional[str]=None
     )
 
 
+Unit = str
+Body = str
+State = Iterable[Tuple[Unit, Body]]
 
-def managed_units() -> Iterator[str]:
+
+def managed_units() -> State:
     res = check_output(scu('list-unit-files', '--no-pager', '--no-legend')).decode('utf8')
     units = [x.split()[0] for x in res.splitlines()]
     for u in units:
@@ -215,13 +219,10 @@ def managed_units() -> Iterator[str]:
         # could filter by description? but bit too restrictive?
         res = check_output(scu('cat', u)).decode('utf8')
         if is_managed(res):
-            yield u
+            yield u, res
 
-Unit = str
-Body = str
-Plan = Iterable[Tuple[Unit, Body]]
 
-def plan(jobs: Iterable[Job]) -> Plan:
+def state(jobs: Iterable[Job]) -> State:
     def check(unit_file, body):
         verify(unit_file=unit_file, body=body)
         return (unit_file, body)
@@ -247,39 +248,100 @@ def plan(jobs: Iterable[Job]) -> Plan:
     # TODO copy files with rollback? not sure how easy it is..
 
 
-def apply_plan(pjobs: Plan) -> None:
-    plist = list(pjobs)
+from collections import OrderedDict
+from typing import Callable
 
-    # TODO ugh. how to test this properly?
-    current = list(sorted(managed_units()))
-    pending = list(p[0] for p in plist)
 
-    to_disable = [u for u in current if u not in pending]
-    if len(to_disable) == len(current):
+# TODO bleh. too verbose..
+class Update(NamedTuple):
+    unit_file: Unit
+    old_body: Body
+    new_body: Body
+
+
+class Delete(NamedTuple):
+    unit_file: Unit
+
+
+class Add(NamedTuple):
+    unit_file: Unit
+    body: Body
+
+
+Action = Union[Update, Delete, Add]
+Plan = Iterable[Action]
+
+# TODO ugh. not sure how to verify them?
+
+def compute_plan(*, current: State, pending: State) -> Plan:
+    # eh, I feel like i'm reinventing something already existing here...
+    currentd = OrderedDict(current)
+    pendingd = OrderedDict(pending)
+
+    units = [c for c in currentd if c not in pendingd] + list(pendingd.keys())
+    for u in units:
+        in_cur = u in currentd
+        in_pen = u in pendingd
+        if in_cur:
+            if in_pen:
+                yield Update(unit_file=u, old_body=currentd[u], new_body=pendingd[u])
+            else:
+                yield Delete(unit_file=u)
+        else:
+            if in_cur:
+                yield Add(unit_file=u, body=pendingd[u])
+            else:
+                raise AssertionError("Can't happen")
+
+
+# TODO it's not apply, more like 'compute' and also plan is more like a diff between states?
+def apply_state(pending: State) -> None:
+    current = list(managed_units())
+    plan = list(compute_plan(current=current, pending=pending))
+
+    deletes: List[Delete] = []
+    updates: List[Update] = []
+    adds: List[Add] = []
+
+    for a in plan:
+        if isinstance(a, Delete):
+            deletes.append(a)
+        elif isinstance(a, Update):
+            updates.append(a)
+        elif isinstance(a, Add):
+            adds.append(a)
+        else:
+            raise AssertionError("Can't happen", a)
+
+    if len(deletes) == len(current):
         raise RuntimeError(f"Something might be wrong: current {current}, pending {pending}")
-    if len(to_disable) > 0:
-        logger.info('Disabling: %s', to_disable)
 
-    for u in to_disable:
+    logger.info('disabling: %d', len(deletes)) # TODO rename to disables?
+    logger.info('updating : %d', len(updates)) # TODO list unit names?
+    logger.info('adding   : %d', len(adds)) # TODO only list ones that actually changing?
+
+    for a in deletes:
         # TODO stop timer first?
-        check_call(scu('stop', u))
-    for u in to_disable:
-        (DIR / u).unlink() # TODO eh. not sure what do we do with user modifications?
+        check_call(scu('stop', a.unit_file))
+    for a in deletes:
+        (DIR / a.unit_file).unlink() # TODO eh. not sure what do we do with user modifications?
 
+    for a in updates:
+        assert a.old_body == a.new_body, a # TODO
 
-    # TODO FIXME logging...
-    # TODO FIXME undo first?
-    for unit_file, body in plist:
-        write_unit(unit_file=unit_file, body=body)
+    # TODO more logging?
+
+    for a in adds:
+        write_unit(unit_file=a.unit_file, body=a.body)
 
     reload()
 
 
 def manage(jobs: Iterable[Job]) -> None:
-    pjobs = plan(jobs)
-    # TOOD assert nonzero plan?
+    st = state(jobs)
+    # TOOD assert nonzero state?
 
-    apply_plan(pjobs)
+    apply_state(st)
 
 
 def main():
@@ -294,7 +356,7 @@ def main():
     mode = args.mode; assert mode is not None
 
     if mode == 'managed':
-        for u in managed_units():
+        for u, _ in managed_units():
             print(u)
     elif mode == 'timers':
         os.execvp('watch', ['watch', '-n', '0.5', ' '.join(scu('list-timers'))])
@@ -371,3 +433,10 @@ if __name__ == '__main__':
 
 
 # TODO change log formats for emails? not that I really need pids..
+
+# def update_unit(unit_file: Unit, old_body: Body, new_body: Body) -> Action:
+#     if old_body == new_body:
+#         pass # TODO no-op?
+#     else:
+#         raise RuntimeError(unit_file, old_body, new_body)
+#     # TODO hmm FIXME!! yield is a nice way to make function lazy??
