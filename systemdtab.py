@@ -11,6 +11,10 @@ from tempfile import NamedTemporaryFile, TemporaryDirectory
 from typing import NamedTuple, Union, Sequence, Optional, Iterator, Tuple, Iterable, List
 
 
+# TODO not sure about click..
+import click # type: ignore
+
+
 from kython.klogging2 import LazyLogger # type: ignore
 
 
@@ -34,6 +38,7 @@ def reload():
     check_call(scu('daemon-reload'))
 
 
+# TODO use Environment section instead?
 MANAGED_MARKER = 'Systemdtab=true'
 def is_managed(body: str):
     return MANAGED_MARKER in body
@@ -55,9 +60,9 @@ When = str
 def timer(*, unit_name: str, when: When) -> str:
     return f'''
 # managed by systemdtab
+# {MANAGED_MARKER}
 [Unit]
 Description=Timer for {unit_name}
-{MANAGED_MARKER}
 
 [Timer]
 OnCalendar={when}
@@ -83,6 +88,7 @@ def service(*, unit_name: str, command: Command) -> str:
 
     res = f'''
 # managed by systemdtab
+# {MANAGED_MARKER}
 [Unit]
 Description=Service for {unit_name}
 OnFailure=status-email@%n.service
@@ -90,12 +96,14 @@ OnFailure=status-email@%n.service
 [Service]
 ExecStart={cmd}
 # StandardOutput=file:/L/tmp/alala.log
-{MANAGED_MARKER}
 '''
     # TODO not sure if should include username??
     return res
 
 
+# TODO ugh. verify tries using already installed unit files so if they were bad, everything would fail
+# I guess could do two stages, i.e. units first, then timers
+# dunno, a bit less atomic though...
 def verify(*, unit_file: str, body: str):
     # ugh. pipe doesn't work??
     # systemd-analyze --user verify <(cat systemdtab-test.service)
@@ -111,7 +119,12 @@ def verify(*, unit_file: str, body: str):
         assert out == b'', out
         lines = err.splitlines()
         lines = [l for l in lines if b"Unknown lvalue 'Systemdtab'" not in l] # meh
-        assert len(lines) == 0, err
+        if len(lines) != 0:
+            logger.error('while installing %s', unit_file)
+            for line in lines:
+                sys.stderr.write(line.decode('utf8') + '\n')
+            # TODO right, need to install service first...
+            raise RuntimeError(f"Failed to install {unit_file}")
 
 
 def test_verify():
@@ -173,7 +186,7 @@ Description=status email for %i to {user}
 
 [Service]
 Type=oneshot
-ExecStart={target} {user} %i
+ExecStart={target} {user} %i "-o cat"
 # TODO why these were suggested??
 # User=nobody
 # Group=systemd-journal
@@ -238,7 +251,6 @@ def state(jobs: Iterable[Job]) -> State:
     for j in jobs:
         s = service(unit_name=j.unit_name, command=j.command)
         yield check(j.unit_name + '.service', s)
-        # write_unit(unit_file=j.unit_name + '.service', contents=s) T
 
         when = j.when
         if when is None:
@@ -246,9 +258,6 @@ def state(jobs: Iterable[Job]) -> State:
         t = timer(unit_name=j.unit_name, when=when)
         yield check(j.unit_name + '.timer', t)
 
-        # write_unit(unit_file=unit_name + '.timer', contents=t)
-        # TODO not sure what should be started? timers only I suppose
-        # check_call(scu('start', unit_name + '.timer'))
     # TODO otherwise just unit status or something?
 
     # TODO FIXME enable?
@@ -297,7 +306,7 @@ def compute_plan(*, current: State, pending: State) -> Plan:
             else:
                 yield Delete(unit_file=u)
         else:
-            if in_cur:
+            if in_pen:
                 yield Add(unit_file=u, body=pendingd[u])
             else:
                 raise AssertionError("Can't happen")
@@ -322,8 +331,12 @@ def apply_state(pending: State) -> None:
         else:
             raise AssertionError("Can't happen", a)
 
-    if len(deletes) == len(current):
-        raise RuntimeError(f"Something might be wrong: current {current}, pending {pending}")
+    if len(deletes) == len(current) and len(deletes) > 0:
+        msg = f"Trying to delete all managed jobs"
+        if click.confirm(f'{msg}. Are you sure?', default=False):
+            pass
+        else:
+            raise RuntimeError(msg)
 
     logger.info('disabling: %d', len(deletes)) # TODO rename to disables?
     logger.info('updating : %d', len(updates)) # TODO list unit names?
@@ -340,17 +353,22 @@ def apply_state(pending: State) -> None:
         diff = list(unified_diff(a.old_body.splitlines(keepends=True), a.new_body.splitlines(keepends=True)))
         if len(diff) == 0:
             continue
-        logger.info('Updating %s', a.unit_file)
+        logger.info('updating %s', a.unit_file)
         for d in diff:
             sys.stderr.write(d)
         write_unit(unit_file=a.unit_file, body=a.new_body)
+        # TODO not sure if worth starting anyway??
 
     # TODO more logging?
 
     for a in adds:
-        logger.info('Adding %s', a.unit_file)
+        ufile = a.unit_file
+        logger.info('adding %s', ufile)
         # TODO when we add, assert that previous unit wasn't managed? otherwise we overwrite something
-        write_unit(unit_file=a.unit_file, body=a.body)
+        write_unit(unit_file=ufile, body=a.body)
+        if ufile.endswith('.timer'):
+            logger.info('starting %s', ufile)
+            check_call(scu('start', ufile))
 
     reload()
 
@@ -377,7 +395,7 @@ def main():
         for u, _ in managed_units():
             print(u)
     elif mode == 'timers':
-        os.execvp('watch', ['watch', '-n', '0.5', ' '.join(scu('list-timers'))])
+        os.execvp('watch', ['watch', '-n', '0.5', ' '.join(scu('list-timers', '--all'))])
     else:
         raise RuntimeError(mode)
     # TODO need self install..
@@ -409,16 +427,6 @@ if __name__ == '__main__':
 
 # TODO use python's literate types?
 # TODO
-#        The following special expressions may be used as shorthands for longer normalized forms:
-#
-#                minutely → *-*-* *:*:00
-#                  hourly → *-*-* *:00:00
-#                   daily → *-*-* 00:00:00
-#                 monthly → *-*-01 00:00:00
-#                  weekly → Mon *-*-* 00:00:00
-#                  yearly → *-01-01 00:00:00
-#               quarterly → *-01,04,07,10-01 00:00:00
-#            semiannually → *-01,07-01 00:00:00
 
 
 # TODO wow, that's quite annoying. so timer has to be separate file. oh well.
