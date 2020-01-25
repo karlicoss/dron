@@ -111,11 +111,14 @@ ExecStart={cmd}
     # TODO not sure if should include username??
     return res
 
-
+VERIFY_UNITS = True
 # TODO ugh. verify tries using already installed unit files so if they were bad, everything would fail
 # I guess could do two stages, i.e. units first, then timers
 # dunno, a bit less atomic though...
 def verify(*, unit_file: str, body: str):
+    if not VERIFY_UNITS:
+        return
+
     # ugh. pipe doesn't work??
     # systemd-analyze --user verify <(cat systemdtab-test.service)
     # Failed to prepare filename /proc/self/fd/11: Invalid argument
@@ -258,6 +261,7 @@ def managed_units() -> State:
 
 
 def test_managed_units():
+    skip_if_ci('no systemd')
     list(managed_units()) # shouldn't fail at least
 
 
@@ -395,7 +399,22 @@ def manage(state: State) -> None:
 
 def cmd_edit():
     sdtab = Path("~/.config/systemdtab").expanduser() # TODO not sure..
-    assert sdtab.exists(), sdtab
+    if not sdtab.exists():
+        if click.confirm(f"tabfile {sdtab} doesn't exist. Create?", default=True):
+            sdtab.write_text('''
+#!/usr/bin/env python3
+from systemdtab import job
+
+def jobs():
+    # yield job(
+    #     'hourly',
+    #     '/bin/echo 123',
+    #     unit_name='test_unit'
+    # )
+    pass
+'''.lstrip())
+        else:
+            raise RuntimeError()
 
     editor = os.environ.get('EDITOR')
     if editor is None:
@@ -416,16 +435,24 @@ def cmd_edit():
                 logger.warning('No notification made')
                 return
 
+            ex: Optional[Exception] = None
             try:
                 state = do_lint(tabfile=tpath)
             except Exception as e:
                 logger.exception(e)
-                if click.confirm('Had errors during linting. Try again?', default=True):
+                ex = e
+            else:
+                try:
+                    manage(state=state)
+                except Exception as ee:
+                    logger.exception(ee)
+                    ex = ee
+            if ex is not None:
+                if click.confirm('Got errors. Try again?', default=True):
                     continue
                 else:
-                    raise e
+                    raise ex
             else:
-                manage(state=state)
                 sdtab.write_text(tpath.read_text()) # handles symlinks correctly
                 logger.info("Wrote changes to %s. Don't forget to commit!", sdtab)
                 break
@@ -464,12 +491,14 @@ def lint(tabfile: Path) -> Iterator[Union[Exception, State]]:
     try:
         jobs = load_jobs(tabfile=tabfile)
     except Exception as e:
+        logger.exception(e)
         yield e
         return
 
     try:
         state = list(make_state(jobs))
     except Exception as e:
+        logger.exception(e)
         yield e
         return
 
@@ -517,7 +546,7 @@ def do_lint(tabfile: Path) -> State:
     eit, vit = tee(lint(tabfile))
     errors = [r for r in eit if     isinstance(r, Exception)]
     values = [r for r in vit if not isinstance(r, Exception)]
-    assert len(errors) == 0
+    assert len(errors) == 0, errors
     [state] = values
     return state
 
@@ -554,16 +583,33 @@ def cmd_timers():
     os.execvp('watch', ['watch', '-n', '0.5', ' '.join(scu('list-timers', '--all'))])
 
 
+class VerifyOff(argparse.Action):
+    def __call__(self, parser, namespace, values, option_string=None):
+        global VERIFY_UNITS
+        VERIFY_UNITS = False
+
+
 def main():
+    def add_verify(p):
+        # ugh. might be broken on bionic :(
+        # specify in readme???
+        # would be nice to use external checker..
+        # https://github.com/systemd/systemd/issues/8072 
+        # https://unix.stackexchange.com/questions/493187/systemd-under-ubuntu-18-04-1-fails-with-failed-to-create-user-slice-serv
+        p.add_argument('--no-verify', action=VerifyOff, nargs=0, help='Skip systemctl verify step')
+
     p = argparse.ArgumentParser()
     sp = p.add_subparsers(dest='mode')
     sp.add_parser('managed', help='List sytemdtab managed units')
     sp.add_parser('timers', help='List all timers')
-    sp.add_parser('edit', help='Edit tabfile')
+    ep = sp.add_parser('edit', help='Edit tabfile')
+    add_verify(ep)
     ap = sp.add_parser('apply', help='Apply tabfile')
     ap.add_argument('tabfile', type=Path)
+    add_verify(ap)
     # TODO --force?
     lp = sp.add_parser('lint', help='Check tabfile')
+    add_verify(lp)
     lp.add_argument('tabfile', type=Path)
     args = p.parse_args()
 
