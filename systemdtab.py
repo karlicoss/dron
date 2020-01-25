@@ -257,6 +257,10 @@ def managed_units() -> State:
             yield u, res
 
 
+def test_managed_units():
+    list(managed_units()) # shouldn't fail at least
+
+
 def make_state(jobs: Iterable[Job]) -> State:
     def check(unit_file, body):
         verify(unit_file=unit_file, body=body)
@@ -538,12 +542,24 @@ def cmd_apply(tabfile: Path) -> None:
     apply(tabfile)
 
 
+def cmd_managed():
+    managed = list(managed_units())
+    if len(managed) == 0:
+        print('No managed units!', file=sys.stderr)
+    for u, _ in managed:
+        print(u)
+    
+
+def cmd_timers():
+    os.execvp('watch', ['watch', '-n', '0.5', ' '.join(scu('list-timers', '--all'))])
+
+
 def main():
     p = argparse.ArgumentParser()
     sp = p.add_subparsers(dest='mode')
-    sp.add_parser('managed')
-    sp.add_parser('timers')
-    sp.add_parser('edit')
+    sp.add_parser('managed', help='List sytemdtab managed units')
+    sp.add_parser('timers', help='List all timers')
+    sp.add_parser('edit', help='Edit tabfile')
     ap = sp.add_parser('apply', help='Apply tabfile')
     ap.add_argument('tabfile', type=Path)
     # TODO --force?
@@ -554,10 +570,9 @@ def main():
     mode = args.mode; assert mode is not None
 
     if mode == 'managed':
-        for u, _ in managed_units():
-            print(u)
+        cmd_managed()
     elif mode == 'timers':
-        os.execvp('watch', ['watch', '-n', '0.5', ' '.join(scu('list-timers', '--all'))])
+        cmd_timers()
     elif mode == 'edit':
         cmd_edit()
     elif mode == 'lint':
