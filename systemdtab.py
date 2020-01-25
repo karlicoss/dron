@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 import argparse
+from collections import OrderedDict
 from difflib import unified_diff
+from itertools import tee
 import getpass
 import os
 import sys
@@ -9,7 +11,7 @@ import shlex
 import shutil
 from subprocess import check_call, CalledProcessError, run, PIPE, check_output
 from tempfile import NamedTemporaryFile, TemporaryDirectory
-from typing import NamedTuple, Union, Sequence, Optional, Iterator, Tuple, Iterable, List
+from typing import NamedTuple, Union, Sequence, Optional, Iterator, Tuple, Iterable, List, Any, Dict
 
 
 # TODO not sure about click..
@@ -246,7 +248,7 @@ def managed_units() -> State:
             yield u, res
 
 
-def state(jobs: Iterable[Job]) -> State:
+def make_state(jobs: Iterable[Job]) -> State:
     def check(unit_file, body):
         verify(unit_file=unit_file, body=body)
         return (unit_file, body)
@@ -267,9 +269,6 @@ def state(jobs: Iterable[Job]) -> State:
     # TODO verify everything before starting to update
     # TODO copy files with rollback? not sure how easy it is..
 
-
-from collections import OrderedDict
-from typing import Callable
 
 
 # TODO bleh. too verbose..
@@ -376,18 +375,13 @@ def apply_state(pending: State) -> None:
     reload()
 
 
-def manage(jobs: Iterable[Job]) -> None:
+def manage(state: State) -> None:
     prepare()
-    st = state(jobs)
-    # TOOD assert nonzero state?
-    apply_state(st)
+    apply_state(pending=state)
 
 
-def edit():
+def cmd_edit():
     sdtab = Path("~/.config/systemdtab").expanduser() # TODO not sure..
-    # TODO not sure what's a good way of opening editor and properly handling tty?
-    # TODO careful with symlinks?
-    # TODO after editing, need to apply?
     assert sdtab.exists(), sdtab
 
     editor = os.environ.get('EDITOR')
@@ -396,39 +390,133 @@ def edit():
         editor = 'nano'
 
     with TemporaryDirectory() as tdir:
-        tpath = str(Path(tdir) / 'systemdtab')
+        tpath = Path(tdir) / 'systemdtab'
         shutil.copy2(sdtab, tpath)
 
         while True:
-            res = run([editor, tpath])
+            res = run([editor, str(tpath)])
             res.check_returncode()
 
-            # TODO prompt to edit again?
-            # TODO how to allow these to be defined in tab file?
-            linters = [
-                ['pylint', '-E', tpath],
-                ['mypy', '--check-untyped', tpath],
-            ]
-            errors = False
-            for l in linters:
-                logger.info('Running: %s', ' '.join(map(shlex.quote, l)))
-                r = run(l)
-                if r.returncode == 0:
-                    logger.info('OK')
+            try:
+                state = do_lint(tabfile=tpath)
+            except Exception as e:
+                logger.exception(e)
+                if click.confirm('Had errors during linting. Try again?', default=True):
                     continue
                 else:
-                    logger.error('FAIL: code: %d', r.returncode)
-                    errors = True
-            if not errors:
-                break
-            # TODO perhaps allow to carry on regardless? not sure..
-            # TODO after linting passed, try installing?
-            # not sure how much we can do without modifying anything...
-            if click.confirm('Had errors during linting. Try again?', default=True):
-                continue
+                    raise e
             else:
-                raise RuntimeError()
+                manage(state=state)
 
+        sdtab.write_text(tpath.read_text()) # this should handle symlinks correctly
+        # TODO perhaps allow to carry on regardless? not sure..
+        # not sure how much we can do without modifying anything...
+
+
+Error = str
+# TODO perhaps, return Plan or error instead?
+
+# eh, implicit convention that only one state will be emitted. oh well
+def lint(tabfile: Path) -> Iterator[Union[Exception, State]]:
+    # TODO how to allow these to be defined in tab file?
+    linters = [
+        ['pylint', '-E', str(tabfile)],
+        ['mypy', '--check-untyped', str(tabfile)],
+    ]
+    errors = []
+    for l in linters:
+        logger.info('Running: %s', ' '.join(map(shlex.quote, l)))
+        r = run(l)
+        if r.returncode == 0:
+            logger.info('OK')
+            continue
+        else:
+            logger.error('FAIL: code: %d', r.returncode)
+            errors.append('error')
+    if len(errors) > 0:
+        yield RuntimeError('Python linting failed!')
+        return
+
+    # TODO just add options to skip python lint? so it always goes through same code paths
+
+    try:
+        jobs = load_jobs(tabfile=tabfile)
+    except Exception as e:
+        yield e
+        return
+
+    try:
+        state = list(make_state(jobs))
+    except Exception as e:
+        yield e
+        return
+
+    yield state
+
+
+def test_do_lint(tmp_path):
+    import pytest
+    def ok(body: str):
+        tpath = Path(tmp_path) / 'sdtab'
+        tpath.write_text(body)
+        do_lint(tabfile=tpath)
+
+    def fails(body: str):
+        with pytest.raises(Exception):
+            ok(body)
+
+    fails(body='''
+    None.whatever
+    ''')
+
+    # no jobs
+    fails(body='''
+    ''')
+
+    ok(body='''
+def jobs():
+    yield from []
+''')
+
+    ok(body='''
+from systemdtab import job
+def jobs():
+    yield job(
+        'hourly',
+        'echo 123',
+        unit_name='unit_test',
+    )
+''')
+
+
+
+def do_lint(tabfile: Path) -> State:
+    eit, vit = tee(lint(tabfile))
+    errors = [r for r in eit if     isinstance(r, Exception)]
+    values = [r for r in vit if not isinstance(r, Exception)]
+    assert len(errors) == 0
+    [state] = values
+    return state
+
+
+def load_jobs(tabfile: Path) -> Iterator[Job]:
+    globs: Dict[str, Any] = {}
+    exec(tabfile.read_text(), globs)
+    jobs = globs['jobs']
+    return jobs()
+
+
+def apply(tabfile: Path) -> None:
+    state = do_lint(tabfile)
+    manage(state=state)
+
+
+def cmd_lint(tabfile: Path) -> None:
+    do_lint(tabfile) # just ignore state
+
+
+def cmd_apply(tabfile: Path) -> None:
+    apply(tabfile)
 
 
 def main():
@@ -437,6 +525,11 @@ def main():
     sp.add_parser('managed')
     sp.add_parser('timers')
     sp.add_parser('edit')
+    ap = sp.add_parser('apply', help='Apply tabfile')
+    ap.add_argument('tabfile', type=Path)
+    # TODO --force?
+    lp = sp.add_parser('lint', help='Check tabfile')
+    lp.add_argument('tabfile', type=Path)
     args = p.parse_args()
 
     mode = args.mode; assert mode is not None
@@ -447,8 +540,11 @@ def main():
     elif mode == 'timers':
         os.execvp('watch', ['watch', '-n', '0.5', ' '.join(scu('list-timers', '--all'))])
     elif mode == 'edit':
-        edit()
-    # TODO lint mode??
+        cmd_edit()
+    elif mode == 'lint':
+        cmd_lint(args.tabfile)
+    elif mode == 'apply':
+        cmd_apply(args.tabfile)
     else:
         raise RuntimeError(mode)
     # TODO need self install..
