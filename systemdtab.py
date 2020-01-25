@@ -201,7 +201,7 @@ def managed_units() -> Iterator[str]:
         # could filter by description? but bit too restrictive?
         res = check_output(scu('cat', u)).decode('utf8')
         if is_managed(res):
-            yield res
+            yield u
 
 Unit = str
 Body = str
@@ -233,9 +233,25 @@ def plan(jobs: Iterable[Job]) -> Plan:
     # TODO copy files with rollback? not sure how easy it is..
 
 
-
 def apply_plan(pjobs: Plan) -> None:
     plist = list(pjobs)
+
+    # TODO ugh. how to test this properly?
+    current = list(sorted(managed_units()))
+    pending = list(p[0] for p in plist)
+
+    to_disable = [u for u in current if u not in pending]
+    if len(to_disable) == len(current):
+        raise RuntimeError(f"Something might be wrong: current {current}, pending {pending}")
+    if len(to_disable) > 0:
+        logger.info('Disabling: %s', to_disable)
+
+    for u in to_disable:
+        # TODO stop timer first?
+        check_call(scu('stop', u))
+    for u in to_disable:
+        (DIR / u).unlink() # TODO eh. not sure what do we do with user modifications?
+
 
     # TODO FIXME logging...
     # TODO FIXME undo first?
