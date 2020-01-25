@@ -425,6 +425,9 @@ def jobs():
         tpath = Path(tdir) / 'systemdtab'
         shutil.copy2(sdtab, tpath)
 
+        sdtpath = str(Path(__file__).resolve().absolute())
+        shutil.copy2(sdtpath, str(tdir)) # meh
+
         orig_mtime = tpath.stat().st_mtime
         while True:
             res = run([editor, str(tpath)])
@@ -470,12 +473,12 @@ def lint(tabfile: Path) -> Iterator[Union[Exception, State]]:
     # TODO how to allow these to be defined in tab file?
     linters = [
         ['pylint', '-E', str(tabfile)],
-        ['mypy', '--check-untyped', str(tabfile)],
+        ['mypy', '--no-incremental', '--check-untyped', str(tabfile)],
     ]
     errors = []
     for l in linters:
         logger.info('Running: %s', ' '.join(map(shlex.quote, l)))
-        r = run(l)
+        r = run(l, cwd=str(tabfile.parent)) # TODO meh. cwd is a a hack to find systemdtab module..
         if r.returncode == 0:
             logger.info('OK')
             continue
