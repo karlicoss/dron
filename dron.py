@@ -22,10 +22,10 @@ try:
     from kython.klogging2 import LazyLogger # type: ignore
 except ImportError:
     import logging
-    logger = logging.getLogger('systemdtab')
+    logger = logging.getLogger('dron')
 else:
     # TODO need bit less verbose logging
-    logger = LazyLogger('systemdtab', level='debug')
+    logger = LazyLogger('dron', level='debug')
 
 DIR = Path("~/.config/systemd/user").expanduser()
 # TODO FIXME mkdir in case it doesn't exist..
@@ -82,11 +82,18 @@ def reload():
     check_call(scu('daemon-reload'))
 
 
-# TODO use Environment section instead?
-MANAGED_MARKER = 'Systemdtab=true'
+MANAGED_MARKER = '<MANAGED BY DRON>'
 def is_managed(body: str):
-    return MANAGED_MARKER in body
+    # TODO not sure what's a good way of detecting that..
+    legacy_marker = 'Systemdtab=true'
+    # TODO remove Systemdtab=true later
+    return MANAGED_MARKER in body or legacy_marker in body
 
+
+MANAGED_HEADER = f'''
+# {MANAGED_MARKER}
+# If you do any manual changes, they will be overridden on the next dron run
+'''.lstrip()
 
 
 def test_managed(handle_systemd):
@@ -105,14 +112,13 @@ When = str
 # TODO how to come up with good implicit job name?
 def timer(*, unit_name: str, when: When) -> str:
     return f'''
-# managed by systemdtab
-# {MANAGED_MARKER}
+{MANAGED_HEADER}
 [Unit]
 Description=Timer for {unit_name}
 
 [Timer]
 OnCalendar={when}
-'''
+'''.lstrip()
 
 
 Command = Union[PathIsh, Sequence[PathIsh]]
@@ -137,8 +143,7 @@ def service(*, unit_name: str, command: Command, **kwargs: str) -> str:
     extras = '\n'.join(f'{k}={v}' for k, v in kwargs.items())
   
     res = f'''
-# managed by systemdtab
-# {MANAGED_MARKER}
+{MANAGED_HEADER}
 [Unit]
 Description=Service for {unit_name}
 OnFailure=status-email@%n.service
@@ -146,7 +151,7 @@ OnFailure=status-email@%n.service
 [Service]
 ExecStart={cmd}
 {extras}
-'''
+'''.lstrip()
     # TODO not sure if should include username??
     return res
 
@@ -165,16 +170,15 @@ def verify(*, unit_file: str, body: str):
         # TODO ugh. even exit code 1 doesn't guarantee correct output??
         out = res.stdout
         err = res.stderr
-        assert out == b'', out
-        lines = err.splitlines()
-        lines = [l for l in lines if b"Unknown lvalue 'Systemdtab'" not in l] # meh
-        if len(lines) == 0 and res.returncode == 0:
+        assert out == b'', out # not sure if that's possible..
+
+        if err == b'':
             return
 
         msg = f'failed checking {unit_file}, exit code {res.returncode}'
         logger.error(msg)
-        for line in lines:
-            sys.stderr.write(line.decode('utf8') + '\n')
+        for line in err.decode('utf8').splitlines():
+            print(line, file=sys.stderr)
             # TODO right, might need to install service first...
         raise RuntimeError(msg)
 
@@ -436,12 +440,13 @@ def manage(state: State) -> None:
 
 
 def cmd_edit():
-    sdtab = Path("~/.config/systemdtab").expanduser() # TODO not sure..
+    # TODO allow specifying the path somewhere?
+    sdtab = Path("~/.config/drontab").expanduser() # TODO not sure..
     if not sdtab.exists():
         if click.confirm(f"tabfile {sdtab} doesn't exist. Create?", default=True):
             sdtab.write_text('''
 #!/usr/bin/env python3
-from systemdtab import job
+from dron import job
 
 def jobs():
     # yield job(
@@ -460,7 +465,7 @@ def jobs():
         editor = 'nano'
 
     with TemporaryDirectory() as tdir:
-        tpath = Path(tdir) / 'systemdtab'
+        tpath = Path(tdir) / 'drontab'
         shutil.copy2(sdtab, tpath)
 
         orig_mtime = tpath.stat().st_mtime
@@ -576,7 +581,7 @@ def jobs():
 ''')
 
     ok(body='''
-from systemdtab import job
+from dron import job
 def jobs():
     yield job(
         'hourly',
@@ -702,7 +707,7 @@ if __name__ == '__main__':
 # TODO test via systemd??
 
 # TODO would be nice to revert... via contextmanager?
-# TODO assert that managed by systemdtab
+# TODO assert that managed by dron
 # TODO name it systemdsl?
 # sdcron? sdtab?
 # TODO not sure what rollback should do w.r.t to
@@ -722,7 +727,7 @@ if __name__ == '__main__':
 
 # TODO actually for me, stuff like 'hourly' makes little sense; I usually space out in time..
 
-# TODO need to install systemdtab-email thing?
+# TODO need to install dron-email thing?
 # TODO dunno, separate script might be nicer to test?
 
 
