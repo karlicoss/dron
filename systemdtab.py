@@ -91,12 +91,16 @@ def ncmd(command: Command) -> List[str]:
 
 
 # TODO allow to pass extra args
-def service(*, unit_name: str, command: Command) -> str:
+def service(*, unit_name: str, command: Command, **kwargs: str) -> str:
     # TODO FIXME think carefully about escaping command etc?
     nc = ncmd(command)
     # TODO not sure how to handle this properly...
     cmd = ' '.join(nc)
 
+    # TODO ugh. how to allow injecting arbitrary stuff, not only in [Service] section?
+    
+    extras = '\n'.join(f'{k}={v}' for k, v in kwargs.items())
+  
     res = f'''
 # managed by systemdtab
 # {MANAGED_MARKER}
@@ -106,7 +110,7 @@ OnFailure=status-email@%n.service
 
 [Service]
 ExecStart={cmd}
-# StandardOutput=file:/L/tmp/alala.log
+{extras}
 '''
     # TODO not sure if should include username??
     return res
@@ -218,11 +222,12 @@ class Job(NamedTuple):
     when: Optional[When]
     command: Command
     unit_name: str
+    kwargs: Dict[str, str]
 
 # TODO think about arg names?
 # TODO not sure if should give it default often?
 # TODO when first? so it's more compat to crontab..
-def job(when: Optional[When], command: Command, *, unit_name: Optional[str]=None) -> Job:
+def job(when: Optional[When], command: Command, *, unit_name: Optional[str]=None, **kwargs) -> Job:
     """
     when: if None, then timer won't be created (still allows running job manually)
 
@@ -234,6 +239,7 @@ def job(when: Optional[When], command: Command, *, unit_name: Optional[str]=None
         when=when,
         command=command,
         unit_name=unit_name,
+        kwargs=kwargs,
     )
 
 
@@ -271,7 +277,7 @@ def make_state(jobs: Iterable[Job]) -> State:
         return (unit_file, body)
 
     for j in jobs:
-        s = service(unit_name=j.unit_name, command=j.command)
+        s = service(unit_name=j.unit_name, command=j.command, **j.kwargs)
         yield check(j.unit_name + '.service', s)
 
         when = j.when
