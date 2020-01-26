@@ -34,10 +34,44 @@ DIR = Path("~/.config/systemd/user").expanduser()
 PathIsh = Union[str, Path]
 
 
-def skip_if_ci(reason: str):
-    if 'CI' in os.environ:
-        import pytest # type: ignore
-        pytest.skip("Can't run this on CI: " + reason)
+VERIFY_UNITS = True
+# TODO ugh. verify tries using already installed unit files so if they were bad, everything would fail
+# I guess could do two stages, i.e. units first, then timers
+# dunno, a bit less atomic though...
+
+
+if 'PYTEST' in os.environ: # set by lint script
+    import pytest # type: ignore
+    fixture = pytest.fixture
+else:
+    fixture = lambda f: f # no-op otherwise to prevent pytest import
+
+
+def has_systemd():
+    if 'GITHUB_ACTION' in os.environ:
+        return False
+    return True
+
+
+def skip_if_no_systemd():
+    import pytest # type: ignore
+    if not has_systemd():
+        pytest.skip('No systemd')
+
+
+# TODO eh, come up with a better name
+@fixture
+def handle_systemd():
+    '''
+    If we can't use systemd, we need to suppress systemd-specific linting
+    '''
+    global VERIFY_UNITS
+    if not has_systemd():
+        VERIFY_UNITS = False
+    try:
+        yield
+    finally:
+        VERIFY_UNITS = True
 
 
 def scu(*args):
@@ -54,13 +88,14 @@ def is_managed(body: str):
     return MANAGED_MARKER in body
 
 
-def test_managed():
-    skip_if_ci('no systemctl')
+
+def test_managed(handle_systemd):
+    skip_if_no_systemd()
     assert is_managed(timer(unit_name='whatever', when='daily'))
 
     custom = '''
 [Service]
-ExecStart=echo 123
+ExecStart=/bin/echo 123
 '''
     verify(unit_file='other.service', body=custom) # precondition
     assert not is_managed(custom)
@@ -115,10 +150,7 @@ ExecStart={cmd}
     # TODO not sure if should include username??
     return res
 
-VERIFY_UNITS = True
-# TODO ugh. verify tries using already installed unit files so if they were bad, everything would fail
-# I guess could do two stages, i.e. units first, then timers
-# dunno, a bit less atomic though...
+
 def verify(*, unit_file: str, body: str):
     if not VERIFY_UNITS:
         return
@@ -147,10 +179,10 @@ def verify(*, unit_file: str, body: str):
         raise RuntimeError(msg)
 
 
-def test_verify():
-    skip_if_ci('no systemctl')
-    import pytest # type: ignore[import]
-    def fails(body):
+def test_verify(handle_systemd):
+    skip_if_no_systemd()
+    def fails(body: str):
+        import pytest # type: ignore[import]
         with pytest.raises(Exception):
             verify(unit_file='whatever.service', body=body)
 
@@ -159,10 +191,10 @@ def test_verify():
 
     ok(body='''
 [Service]
-ExecStart=echo 123
+ExecStart=/bin/echo 123
 ''')
 
-    ok(body=service(unit_name='alala', command='echo 123'))
+    ok(body=service(unit_name='alala', command='/bin/echo 123'))
 
     # garbage
     fails(body='fewfewf')
@@ -267,7 +299,7 @@ def managed_units() -> State:
 
 
 def test_managed_units():
-    skip_if_ci('no systemd')
+    skip_if_no_systemd()
     list(managed_units()) # shouldn't fail at least
 
 
@@ -431,9 +463,6 @@ def jobs():
         tpath = Path(tdir) / 'systemdtab'
         shutil.copy2(sdtab, tpath)
 
-        sdtpath = str(Path(__file__).resolve().absolute())
-        shutil.copy2(sdtpath, str(tdir)) # meh
-
         orig_mtime = tpath.stat().st_mtime
         while True:
             res = run([editor, str(tpath)])
@@ -478,13 +507,21 @@ Error = str
 def lint(tabfile: Path) -> Iterator[Union[Exception, State]]:
     # TODO how to allow these to be defined in tab file?
     linters = [
-        ['pylint', '-E', str(tabfile)],
-        ['mypy', '--no-incremental', '--check-untyped', str(tabfile)],
+        ['python3', '-m', 'pylint', '-E', str(tabfile)],
+        ['python3', '-m', 'mypy', '--no-incremental', '--check-untyped', str(tabfile)],
     ]
+
+    ldir = tabfile.parent
+    # TODO not sure if should always lint in temporary dir to prevent turds?
+
+    # copy ourselves to make sure linters find dcron module..
+    dcron = str(Path(__file__).resolve().absolute())
+    shutil.copy2(dcron, str(ldir))
+
     errors = []
     for l in linters:
         logger.info('Running: %s', ' '.join(map(shlex.quote, l)))
-        r = run(l, cwd=str(tabfile.parent)) # TODO meh. cwd is a a hack to find systemdtab module..
+        r = run(l, cwd=str(ldir))
         if r.returncode == 0:
             logger.info('OK')
             continue
@@ -514,8 +551,7 @@ def lint(tabfile: Path) -> Iterator[Union[Exception, State]]:
     yield state
 
 
-def test_do_lint(tmp_path):
-    skip_if_ci('no systemctl')
+def test_do_lint(tmp_path, handle_systemd):
     import pytest
     def ok(body: str):
         tpath = Path(tmp_path) / 'sdtab'
@@ -544,7 +580,7 @@ from systemdtab import job
 def jobs():
     yield job(
         'hourly',
-        'echo 123',
+        '/bin/echo 123',
         unit_name='unit_test',
     )
 ''')
@@ -719,3 +755,5 @@ if __name__ == '__main__':
 
 
 # TODO that perhaps? https://askubuntu.com/a/897317/427470
+
+# TODO caveats: older systemd versions would only accept absolute path for ExecStart

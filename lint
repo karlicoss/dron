@@ -1,5 +1,5 @@
 #!/bin/bash -eux
 
-pylint -E systemd-email systemdtab.py
-mypy --check-untyped systemd-email systemdtab.py
-pytest -s systemdtab.py
+python3 -m pylint -E systemd-email systemdtab.py
+python3 -m mypy --check-untyped systemd-email systemdtab.py
+PYTEST=yes python3 -m pytest -s systemdtab.py
