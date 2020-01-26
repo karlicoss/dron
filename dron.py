@@ -139,9 +139,9 @@ def service(*, unit_name: str, command: Command, **kwargs: str) -> str:
     cmd = ' '.join(nc)
 
     # TODO ugh. how to allow injecting arbitrary stuff, not only in [Service] section?
-    
+
     extras = '\n'.join(f'{k}={v}' for k, v in kwargs.items())
-  
+
     res = f'''
 {MANAGED_HEADER}
 [Unit]
@@ -161,13 +161,13 @@ def verify(*, unit_file: str, body: str):
         return
 
     # ugh. pipe doesn't work??
-    # systemd-analyze --user verify <(cat systemdtab-test.service)
+    # e.g. 'systemd-analyze --user verify <(cat systemdtab-test.service)' results in:
     # Failed to prepare filename /proc/self/fd/11: Invalid argument
     with TemporaryDirectory() as tdir:
         sfile = Path(tdir) / unit_file
         sfile.write_text(body)
         res = run(['systemd-analyze', '--user', 'verify', str(sfile)], stdout=PIPE, stderr=PIPE)
-        # TODO ugh. even exit code 1 doesn't guarantee correct output??
+        # ugh. apparently even exit code 1 doesn't guarantee correct output??
         out = res.stdout
         err = res.stderr
         assert out == b'', out # not sure if that's possible..
@@ -175,8 +175,13 @@ def verify(*, unit_file: str, body: str):
         if err == b'':
             return
 
+        # TODO UGH.
+        # is not executable: No such file or directory
+
         msg = f'failed checking {unit_file}, exit code {res.returncode}'
         logger.error(msg)
+        print(body, file=sys.stderr)
+        print('systemd-analyze output:', file=sys.stderr)
         for line in err.decode('utf8').splitlines():
             print(line, file=sys.stderr)
             # TODO right, might need to install service first...
@@ -441,10 +446,10 @@ def manage(state: State) -> None:
 
 def cmd_edit():
     # TODO allow specifying the path somewhere?
-    sdtab = Path("~/.config/drontab").expanduser() # TODO not sure..
-    if not sdtab.exists():
-        if click.confirm(f"tabfile {sdtab} doesn't exist. Create?", default=True):
-            sdtab.write_text('''
+    drontab = Path("~/.config/drontab").expanduser() # TODO not sure..
+    if not drontab.exists():
+        if click.confirm(f"tabfile {drontab} doesn't exist. Create?", default=True):
+            drontab.write_text('''
 #!/usr/bin/env python3
 from dron import job
 
@@ -466,7 +471,7 @@ def jobs():
 
     with TemporaryDirectory() as tdir:
         tpath = Path(tdir) / 'drontab'
-        shutil.copy2(sdtab, tpath)
+        shutil.copy2(drontab, tpath)
 
         orig_mtime = tpath.stat().st_mtime
         while True:
@@ -496,8 +501,8 @@ def jobs():
                 else:
                     raise ex
             else:
-                sdtab.write_text(tpath.read_text()) # handles symlinks correctly
-                logger.info("Wrote changes to %s. Don't forget to commit!", sdtab)
+                drontab.write_text(tpath.read_text()) # handles symlinks correctly
+                logger.info("Wrote changes to %s. Don't forget to commit!", drontab)
                 break
 
         # TODO show git diff?
@@ -559,7 +564,7 @@ def lint(tabfile: Path) -> Iterator[Union[Exception, State]]:
 def test_do_lint(tmp_path, handle_systemd):
     import pytest
     def ok(body: str):
-        tpath = Path(tmp_path) / 'sdtab'
+        tpath = Path(tmp_path) / 'drontab'
         tpath.write_text(body)
         do_lint(tabfile=tpath)
 
@@ -589,6 +594,12 @@ def jobs():
         unit_name='unit_test',
     )
 ''')
+
+    example = _drontab_example()
+    # ugh. some hackery to make it find the executable..
+    echo = " '/bin/echo"
+    example = example.replace(" 'linkchecker", echo).replace(" '/home/user/scripts/run-borg", echo).replace(" 'ping", " '/bin/ping")
+    ok(body=example)
 
 
 
@@ -627,7 +638,7 @@ def cmd_managed():
         print('No managed units!', file=sys.stderr)
     for u, _ in managed:
         print(u)
-    
+
 
 def cmd_timers():
     os.execvp('watch', ['watch', '-n', '0.5', ' '.join(scu('list-timers', '--all'))])
@@ -647,7 +658,43 @@ class VerifyOff(argparse.Action):
         VERIFY_UNITS = False
 
 
-def main():
+# TODO test it and also on Circle?
+def _drontab_example():
+    return '''
+from dron import job
+
+# at the moment you're expected to define jobs() function that yields jobs
+# in the future I might add more mechanisms
+def jobs():
+    # simple job that doesn't do much
+    yield job(
+        'daily',
+        '/home/user/scripts/run-borg /home/user',
+        unit_name='borg-backup-home',
+    )
+
+    yield job(
+        'daily',
+        'linkchecker https://beepb00p.xyz',
+        unit_name='linkchecker-beepb00p',
+    )
+
+    # drontab is simply python code!
+    # so if you're annoyed by having to rememver Systemd syntax, you can use a helper function
+    def every(*, mins: int) -> str:
+        return f'*:0/{mins}'
+
+    # make sure my website is alive, it will send local email on failure
+    yield job(
+        every(mins=10),
+        'ping https://beepb00p.xyz',
+        unit_name='ping-beepb00p',
+    )
+'''.lstrip()
+
+
+
+def make_parser():
     def add_verify(p):
         # ugh. might be broken on bionic :(
         # specify in readme???
@@ -656,21 +703,60 @@ def main():
         # https://unix.stackexchange.com/questions/493187/systemd-under-ubuntu-18-04-1-fails-with-failed-to-create-user-slice-serv
         p.add_argument('--no-verify', action=VerifyOff, nargs=0, help='Skip systemctl verify step')
 
-    p = argparse.ArgumentParser()
+    p = argparse.ArgumentParser('''
+dron -- simple frontend for Systemd, inspired by cron.
+
+- *d* stands for 'Systemd'
+- *ron* stands for 'cron'
+
+dron is my attempt to overcome things that make working with Systemd tedious
+'''.strip(),
+        formatter_class=lambda prog: argparse.RawTextHelpFormatter(prog, width=100),  # type: ignore
+    )
+    example = ''.join(': ' + l for l in _drontab_example().splitlines(keepends=True))
+    # TODO begin_src python maybe?
+    p.epilog = f'''
+* What does it do?
+In short, you type ~dron edit~ and edit your config file, similarly to ~crontab -e~:
+
+{example}
+
+After you save your changes and exit the editor, your drontab is checked for syntax and applied
+
+- if checks have passed, your jobs are mapped onto Systemd units and started up
+- if there are potential errors, you are prompted to fix them before retrying
+
+* Why?
+In short, because I want to benefit from the heavy lifting that Systemd does: timeouts, resource management, restart policies, powerful scheduling specs and logging,
+while not having to manually manipulate numerous unit files and restart the daemon all over.
+
+I elaborate on what led me to implement it and motivation [[https://beepb00p.xyz/scheduler.html#what_do_i_want][here]]. Also:
+
+- why not just use [[https://beepb00p.xyz/scheduler.html#cron][cron]]?
+- why not just use [[https://beepb00p.xyz/scheduler.html#systemd][systemd]]?
+    '''
+
     sp = p.add_subparsers(dest='mode')
-    sp.add_parser('managed', help='List sytemdtab managed units')
-    sp.add_parser('timers', help='List all timers')
+    sp.add_parser('managed', help='List units managed by dron')
+    sp.add_parser('timers', help='List all timers') # TODO timers doesn't really belong here?
     pp = sp.add_parser('past', help='List past job runs')
     pp.add_argument('unit', type=str) # TODO add shell completion?
-    ep = sp.add_parser('edit', help='Edit tabfile')
+    ep = sp.add_parser('edit', help="Edit  drontab (like 'crontab -e')")
     add_verify(ep)
-    ap = sp.add_parser('apply', help='Apply tabfile')
+    ap = sp.add_parser('apply', help="Apply drontab (like 'crontab' with no args)")
     ap.add_argument('tabfile', type=Path)
     add_verify(ap)
     # TODO --force?
-    lp = sp.add_parser('lint', help='Check tabfile')
+    # TODO list?
+    lp = sp.add_parser('lint', help="Check drontab (no 'crontab' alternative, sadly!)")
     add_verify(lp)
     lp.add_argument('tabfile', type=Path)
+
+    return p
+
+
+def main():
+    p = make_parser()
     args = p.parse_args()
 
     mode = args.mode; assert mode is not None
@@ -690,7 +776,7 @@ def main():
     else:
         raise RuntimeError(mode)
     # TODO need self install..
-    # TODO add edit command; open sdtab file in EDITOR; lint if necessary (link commands specified in the file)
+    # TODO add edit command; open drontab file in EDITOR; lint if necessary (link commands specified in the file)
     # after linting, carry on to applying
 
 
@@ -703,13 +789,8 @@ if __name__ == '__main__':
 # TODO blame!
 #  systemd-analyze verify -- check syntax
 
-
-# TODO test via systemd??
-
 # TODO would be nice to revert... via contextmanager?
 # TODO assert that managed by dron
-# TODO name it systemdsl?
-# sdcron? sdtab?
 # TODO not sure what rollback should do w.r.t to
 # TODO perhaps, only reenable changed ones? ugh. makes it trickier...
 
@@ -722,14 +803,9 @@ if __name__ == '__main__':
 
 # TODO wow, that's quite annoying. so timer has to be separate file. oh well.
 
-
 # TODO tui for confirming changes, show short diff?
 
 # TODO actually for me, stuff like 'hourly' makes little sense; I usually space out in time..
-
-# TODO need to install dron-email thing?
-# TODO dunno, separate script might be nicer to test?
-
 
 # https://bugs.python.org/issue31528 eh, probably can't use configparser.. plaintext is good enough though.
 
@@ -744,12 +820,8 @@ if __name__ == '__main__':
 
 # TODO test with 'fake' systemd dir?
 
-
 # TODO the assumption is that managed jobs are not changed manually, or changed in a way that doesn't break anything
 # in general it's impossible to prevent anyway
-
-
-# TODO change log formats for emails? not that I really need pids..
 
 # def update_unit(unit_file: Unit, old_body: Body, new_body: Body) -> Action:
 #     if old_body == new_body:
@@ -760,5 +832,3 @@ if __name__ == '__main__':
 
 
 # TODO that perhaps? https://askubuntu.com/a/897317/427470
-
-# TODO caveats: older systemd versions would only accept absolute path for ExecStart

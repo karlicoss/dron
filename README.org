@@ -1,46 +1,131 @@
-What is dron?
+#+begin_src python :results drawer :exports results 
+import dron; return dron.make_parser().prog
+#+end_src
+
+#+RESULTS:
+:results:
+dron -- simple frontend for Systemd, inspired by cron.
 
 - *d* stands for 'Systemd'
 - *ron* stands for 'cron'
 
-dron is my attempt to overcome things that make working with Systemd tedious.
+dron is my attempt to overcome things that make working with Systemd tedious
+:end:
+
+
+#+begin_src python :results drawer :exports results 
+import dron; return dron.make_parser().epilog
+#+end_src
+
+#+RESULTS:
+:results:
 
 * What does it do?
-In short, you type ~drontab -e~ and edit your config file, similarly to ~crontab -e~:
+In short, you type ~dron edit~ and edit your config file, similarly to ~crontab -e~:
 
- TODO add example here?
- 
+: from dron import job
+: 
+: # at the moment you're expected to define jobs() function that yields jobs
+: # in the future I might add more mechanisms
+: def jobs():
+:     # simple job that doesn't do much
+:     yield job(
+:         'daily',
+:         '/home/user/scripts/run-borg /home/user',
+:         unit_name='borg-backup-home',
+:     )
+: 
+:     yield job(
+:         'daily',
+:         'linkchecker https://beepb00p.xyz',
+:         unit_name='linkchecker-beepb00p',
+:     )
+: 
+:     # drontab is simply python code!
+:     # so if you're annoyed by having to rememver Systemd syntax, you can use a helper function
+:     def every(*, mins: int) -> str:
+:         return f'*:0/{mins}'
+: 
+:     # make sure my website is alive, it will send local email on failure
+:     yield job(
+:         every(mins=10),
+:         'ping https://beepb00p.xyz',
+:         unit_name='ping-beepb00p',
+:     )
+
+
 After you save your changes and exit the editor, your drontab is checked for syntax and applied
 
-- if checks have passed, your job speci
-- if there are errors, you are prompted to fix them before retrying
- 
-TODO mention python checks?
-TODO potential feature: custom validation mechanism?
-
+- if checks have passed, your jobs are mapped onto Systemd units and started up
+- if there are potential errors, you are prompted to fix them before retrying
 
 * Why?
-In short, because I want to benefit from the heavy lifting that Systemd does like timeouts, restart policies, powerful scheduling specs and logging,
-while not having to manually manipulate TODO??? of unit files.
+In short, because I want to benefit from the heavy lifting that Systemd does: timeouts, resource management, restart policies, powerful scheduling specs and logging,
+while not having to manually manipulate numerous unit files and restart the daemon all over.
 
 I elaborate on what led me to implement it and motivation [[https://beepb00p.xyz/scheduler.html#what_do_i_want][here]]. Also:
 
 - why not just use [[https://beepb00p.xyz/scheduler.html#cron][cron]]?
 - why not just use [[https://beepb00p.xyz/scheduler.html#systemd][systemd]]?
+    
+:end:
 
-  
-* TODO add issues with various questions?
-  
+
 * Setting up
 
-=pip3 install --user -r requirements.txt=
+- Install Python dependencies: =pip3 install --user -r requirements.txt=
 
-At the moment it depends on =click= for some CLI interactions, which I'm planning to remove/vendorize.
+  At the moment it only depends on =click= for some CLI interactions, which I'm planning to remove/vendorize.
 
-* TODO job 'syntax'?
+- Install =sendmail= from your package manager if you want to recieve job failure emails
 
-mention DSL?
-allow raw jobs/timers?
-allow 'Job' to simply dump its raw file?
+For convenience, I recommend putting a symlink to =dron.py= somewhere in your =PATH= (e.g. =~/.local/bin=).
 
-* TODO other commands? just dump help?
+* Using
+  
+#+begin_src python :results value :exports results 
+import dron; 
+p = dron.make_parser()
+p.prog = ''
+p.epilog = ''
+return p.format_help()
+#+end_src
+
+#+RESULTS:
+#+begin_example
+usage: [-h] {managed,timers,past,edit,apply,lint} ...
+
+positional arguments:
+  {managed,timers,past,edit,apply,lint}
+    managed             List units managed by dron
+    timers              List all timers
+    past                List past job runs
+    edit                Edit  drontab (like 'crontab -e')
+    apply               Apply drontab (like 'crontab' with no args)
+    lint                Check drontab (no 'crontab' alternative, sadly!)
+
+optional arguments:
+  -h, --help            show this help message and exit
+#+end_example
+
+
+* Job syntax
+  
+The idea is that it's a simple python DSL that lets you define simple jobs with minimal friction.
+
+However, if you wish you can pass arbitrary unit properties as keyword arguments as well.
+
+* Caveats
+- older systemd versions would only accept absolute path for =ExecStart=. That should be caught during =dron edit= though
+  
+* Potential improvements
+- custom validation; at the moment it runs pylint, mypy and systemd verify
+- make it more atomic?
+
+  E.g. roll back all the changes until daemon-reload
+- more failure report mechanisms?
+
+  Ideally, benefit from [[https://github.com/dschep/ntfy][ntfy]]
+  
+** TODO add issues with various questions that I had in code?
+  
