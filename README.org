@@ -1,0 +1,46 @@
+What is dron?
+
+- *d* stands for 'Systemd'
+- *ron* stands for 'cron'
+
+dron is my attempt to overcome things that make working with Systemd tedious.
+
+* What does it do?
+In short, you type ~drontab -e~ and edit your config file, similarly to ~crontab -e~:
+
+ TODO add example here?
+ 
+After you save your changes and exit the editor, your drontab is checked for syntax and applied
+
+- if checks have passed, your job speci
+- if there are errors, you are prompted to fix them before retrying
+ 
+TODO mention python checks?
+TODO potential feature: custom validation mechanism?
+
+
+* Why?
+In short, because I want to benefit from the heavy lifting that Systemd does like timeouts, restart policies, powerful scheduling specs and logging,
+while not having to manually manipulate TODO??? of unit files.
+
+I elaborate on what led me to implement it and motivation [[https://beepb00p.xyz/scheduler.html#what_do_i_want][here]]. Also:
+
+- why not just use [[https://beepb00p.xyz/scheduler.html#cron][cron]]?
+- why not just use [[https://beepb00p.xyz/scheduler.html#systemd][systemd]]?
+
+  
+* TODO add issues with various questions?
+  
+* Setting up
+
+=pip3 install --user -r requirements.txt=
+
+At the moment it depends on =click= for some CLI interactions, which I'm planning to remove/vendorize.
+
+* TODO job 'syntax'?
+
+mention DSL?
+allow raw jobs/timers?
+allow 'Job' to simply dump its raw file?
+
+* TODO other commands? just dump help?
