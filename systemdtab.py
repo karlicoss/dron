@@ -586,6 +586,14 @@ def cmd_timers():
     os.execvp('watch', ['watch', '-n', '0.5', ' '.join(scu('list-timers', '--all'))])
 
 
+def cmd_past(unit: str):
+    # meh
+    # TODO so do I need to parse logs to get failure stats? perhaps json would be more reliable
+    cmd = f'journalctl --user -u {unit} | grep systemd'
+    print(cmd)
+    os.execvp('bash', ['bash', '-c', cmd])
+
+
 class VerifyOff(argparse.Action):
     def __call__(self, parser, namespace, values, option_string=None):
         global VERIFY_UNITS
@@ -605,6 +613,8 @@ def main():
     sp = p.add_subparsers(dest='mode')
     sp.add_parser('managed', help='List sytemdtab managed units')
     sp.add_parser('timers', help='List all timers')
+    pp = sp.add_parser('past', help='List past job runs')
+    pp.add_argument('unit', type=str) # TODO add shell completion?
     ep = sp.add_parser('edit', help='Edit tabfile')
     add_verify(ep)
     ap = sp.add_parser('apply', help='Apply tabfile')
@@ -622,6 +632,8 @@ def main():
         cmd_managed()
     elif mode == 'timers':
         cmd_timers()
+    elif mode == 'past':
+        cmd_past(unit=args.unit)
     elif mode == 'edit':
         cmd_edit()
     elif mode == 'lint':
