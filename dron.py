@@ -286,7 +286,7 @@ State = Iterable[Tuple[Unit, Body]]
 
 def managed_units() -> State:
     res = check_output(scu('list-unit-files', '--no-pager', '--no-legend')).decode('utf8')
-    units = [x.split()[0] for x in res.splitlines()]
+    units = list(sorted(x.split()[0] for x in res.splitlines()))
     for u in units:
         # meh. but couldn't find any better way to filter a subset of systemd properties...
         # e.g. sc show only displays 'known' properties.
