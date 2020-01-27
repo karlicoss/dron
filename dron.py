@@ -411,6 +411,7 @@ def apply_state(pending: State) -> None:
     for a in deletes:
         # TODO stop timer first?
         check_call(scu('stop', a.unit_file))
+        # TODO disable?
     for a in deletes:
         (DIR / a.unit_file).unlink() # TODO eh. not sure what do we do with user modifications?
 
@@ -423,7 +424,7 @@ def apply_state(pending: State) -> None:
         for d in diff:
             sys.stderr.write(d)
         write_unit(unit_file=a.unit_file, body=a.new_body)
-        # TODO not sure if worth starting anyway??
+        # TODO dunno, do I need to start them anyway?.. only need to start timers though
 
     # TODO more logging?
 
@@ -434,7 +435,8 @@ def apply_state(pending: State) -> None:
         write_unit(unit_file=ufile, body=a.body)
         if ufile.endswith('.timer'):
             logger.info('starting %s', ufile)
-            check_call(scu('start', ufile))
+            check_call(scu('start', ufile)) # dunno if it's worth restarting?
+            check_call(scu('enable', ufile))
 
     reload()
 
