@@ -641,7 +641,7 @@ def load_jobs(tabfile: Path) -> Iterator[Job]:
 
     # TODO also need to modify pythonpath here??? ugh!
 
-    pp = drontab_dir()
+    pp = str(tabfile.resolve().absolute().parent)
     sys.path.insert(0, pp)
     try:
         exec(tabfile.read_text(), globs)
