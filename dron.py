@@ -756,7 +756,7 @@ I elaborate on what led me to implement it and motivation [[https://beepb00p.xyz
     # TODO list?
     lp = sp.add_parser('lint', help="Check drontab (no 'crontab' alternative, sadly!)")
     add_verify(lp)
-    lp.add_argument('tabfile', type=Path)
+    lp.add_argument('tabfile', type=Path, nargs='?')
 
     return p
 
@@ -767,6 +767,13 @@ def main():
 
     mode = args.mode
 
+    def tabfile_or_default():
+        tabfile = args.tabfile
+        if tabfile is None:
+            click.confirm(f'Apply default tabfile: {DRONTAB}?', default=True, abort=True)
+            tabfile = DRONTAB
+        return tabfile
+
     if mode == 'managed':
         cmd_managed()
     elif mode == 'timers':
@@ -776,12 +783,10 @@ def main():
     elif mode == 'edit':
         cmd_edit()
     elif mode == 'lint':
-        cmd_lint(args.tabfile)
+        tabfile = tabfile_or_default()
+        cmd_lint(tabfile)
     elif mode == 'apply':
-        tabfile = args.tabfile
-        if tabfile is None:
-            click.confirm(f'Apply default tabfile: {DRONTAB}?', default=True, abort=True)
-            tabfile = DRONTAB
+        tabfile = tabfile_or_default()
         cmd_apply(tabfile)
     else:
         logger.error('Unknown mode: %s', mode)
