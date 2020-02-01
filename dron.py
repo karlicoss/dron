@@ -28,7 +28,11 @@ else:
     logger = LazyLogger('dron', level='debug')
 
 DIR = Path("~/.config/systemd/user").expanduser()
-# TODO FIXME mkdir in case it doesn't exist..
+# TODO FIXME mkdir in case it doesn't exist?
+
+
+# TODO allow specifying the path somewhere?
+DRONTAB = Path("~/.config/drontab").expanduser()
 
 
 PathIsh = Union[str, Path]
@@ -447,8 +451,7 @@ def manage(state: State) -> None:
 
 
 def cmd_edit():
-    # TODO allow specifying the path somewhere?
-    drontab = Path("~/.config/drontab").expanduser() # TODO not sure..
+    drontab = DRONTAB
     if not drontab.exists():
         if click.confirm(f"tabfile {drontab} doesn't exist. Create?", default=True):
             drontab.write_text('''
@@ -747,7 +750,7 @@ I elaborate on what led me to implement it and motivation [[https://beepb00p.xyz
     ep = sp.add_parser('edit', help="Edit  drontab (like 'crontab -e')")
     add_verify(ep)
     ap = sp.add_parser('apply', help="Apply drontab (like 'crontab' with no args)")
-    ap.add_argument('tabfile', type=Path)
+    ap.add_argument('tabfile', type=Path, nargs='?')
     add_verify(ap)
     # TODO --force?
     # TODO list?
@@ -775,7 +778,11 @@ def main():
     elif mode == 'lint':
         cmd_lint(args.tabfile)
     elif mode == 'apply':
-        cmd_apply(args.tabfile)
+        tabfile = args.tabfile
+        if tabfile is None:
+            click.confirm(f'Apply default tabfile: {DRONTAB}?', default=True, abort=True)
+            tabfile = DRONTAB
+        cmd_apply(tabfile)
     else:
         logger.error('Unknown mode: %s', mode)
         p.print_usage(sys.stderr)
