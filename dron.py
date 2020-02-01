@@ -521,6 +521,7 @@ Error = str
 # eh, implicit convention that only one state will be emitted. oh well
 def lint(tabfile: Path) -> Iterator[Union[Exception, State]]:
     # TODO how to allow these to be defined in tab file?
+
     linters = [
         ['python3', '-m', 'pylint', '-E', str(tabfile)],
         ['python3', '-m', 'mypy', '--no-incremental', '--check-untyped', str(tabfile)],
@@ -529,14 +530,27 @@ def lint(tabfile: Path) -> Iterator[Union[Exception, State]]:
     ldir = tabfile.parent
     # TODO not sure if should always lint in temporary dir to prevent turds?
 
-    # copy ourselves to make sure linters find dcron module..
-    dcron = str(Path(__file__).resolve().absolute())
-    shutil.copy2(dcron, str(ldir))
+    dron_dir = str(Path(__file__).resolve().absolute().parent)
+    dtab_dir = drontab_dir()
+
+    # meh.
+    def extra_path(variable: str, path: str, env) -> Dict[str, str]:
+        vv = env.get(variable)
+        pp = path + ('' if vv is None else ':' + vv)
+        return {**env, variable: pp}
 
     errors = []
     for l in linters:
         logger.info('Running: %s', ' '.join(map(shlex.quote, l)))
-        r = run(l, cwd=str(ldir))
+        with TemporaryDirectory() as td:
+            env = {**os.environ}
+            env = extra_path('PYTHONPATH', dron_dir, env)
+            env = extra_path('PYTHONPATH', dtab_dir, env)
+
+            env = extra_path('MYPYPATH', dron_dir, env)
+            env = extra_path('MYPYPATH', dtab_dir, env)
+
+            r = run(l, cwd=str(ldir), env=env)
         if r.returncode == 0:
             logger.info('OK')
             continue
@@ -617,9 +631,24 @@ def do_lint(tabfile: Path) -> State:
     return state
 
 
+def drontab_dir() -> str:
+    # meeh
+    return str(DRONTAB.resolve().absolute().parent)
+
+
 def load_jobs(tabfile: Path) -> Iterator[Job]:
     globs: Dict[str, Any] = {}
-    exec(tabfile.read_text(), globs)
+
+    # TODO also need to modify pythonpath here??? ugh!
+
+    pp = drontab_dir()
+    sys.path.insert(0, pp)
+    try:
+        exec(tabfile.read_text(), globs)
+    finally:
+        sys.path.remove(pp) # extremely meh..
+
+
     jobs = globs['jobs']
     return jobs()
 
