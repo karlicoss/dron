@@ -114,6 +114,7 @@ ExecStart=/bin/echo 123
 
 When = str
 # TODO how to come up with good implicit job name?
+# TODO do we need a special target for dron?
 def timer(*, unit_name: str, when: When) -> str:
     return f'''
 {MANAGED_HEADER}
@@ -122,6 +123,9 @@ Description=Timer for {unit_name}
 
 [Timer]
 OnCalendar={when}
+
+[Install]
+WantedBy=timers.target
 '''.lstrip()
 
 
