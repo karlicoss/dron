@@ -790,6 +790,8 @@ I elaborate on what led me to implement it and motivation [[https://beepb00p.xyz
     lp = sp.add_parser('lint', help="Check drontab (no 'crontab' alternative, sadly!)")
     add_verify(lp)
     lp.add_argument('tabfile', type=Path, nargs='?')
+    up = sp.add_parser('uninstall', help="Uninstall all managed jobs")
+    add_verify(up)
 
     return p
 
@@ -803,7 +805,7 @@ def main():
     def tabfile_or_default():
         tabfile = args.tabfile
         if tabfile is None:
-            click.confirm(f'Apply default tabfile: {DRONTAB}?', default=True, abort=True)
+            click.confirm(f'Use default tabfile: {DRONTAB}?', default=True, abort=True)
             tabfile = DRONTAB
         return tabfile
 
@@ -821,6 +823,15 @@ def main():
     elif mode == 'apply':
         tabfile = tabfile_or_default()
         cmd_apply(tabfile)
+    elif mode == 'uninstall':
+        click.confirm('Going to remove all dron managed jobs. Continue?', default=True, abort=True)
+        with TemporaryDirectory() as td:
+            empty = Path(td) / 'empty'
+            empty.write_text('''
+def jobs():
+    yield from []
+''')
+            cmd_apply(empty)
     else:
         logger.error('Unknown mode: %s', mode)
         p.print_usage(sys.stderr)
