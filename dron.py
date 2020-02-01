@@ -715,6 +715,7 @@ dron is my attempt to overcome things that make working with Systemd tedious
 '''.strip(),
         formatter_class=lambda prog: argparse.RawTextHelpFormatter(prog, width=100),  # type: ignore
     )
+    # TODO ugh. when you type e.g. 'dron apply', help format is wrong..
     example = ''.join(': ' + l for l in _drontab_example().splitlines(keepends=True))
     # TODO begin_src python maybe?
     p.epilog = f'''
@@ -761,7 +762,7 @@ def main():
     p = make_parser()
     args = p.parse_args()
 
-    mode = args.mode; assert mode is not None
+    mode = args.mode
 
     if mode == 'managed':
         cmd_managed()
@@ -776,7 +777,9 @@ def main():
     elif mode == 'apply':
         cmd_apply(args.tabfile)
     else:
-        raise RuntimeError(mode)
+        logger.error('Unknown mode: %s', mode)
+        p.print_usage(sys.stderr)
+        sys.exit(1)
     # TODO need self install..
     # TODO add edit command; open drontab file in EDITOR; lint if necessary (link commands specified in the file)
     # after linting, carry on to applying
