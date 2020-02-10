@@ -112,17 +112,27 @@ ExecStart=/bin/echo 123
     assert not is_managed(custom)
 
 
-When = str
+OnCalendar = str
+TimerSpec = Dict[str, str] # meh
+When = Union[OnCalendar, TimerSpec]
 # TODO how to come up with good implicit job name?
 # TODO do we need a special target for dron?
 def timer(*, unit_name: str, when: When) -> str:
+    spec: TimerSpec
+    if isinstance(when, str):
+        spec = {'OnCalendar': when}
+    else:
+        spec = when
+
+    specs = '\n'.join(f'{k}={v}' for k, v in spec.items())
+
     return f'''
 {MANAGED_HEADER}
 [Unit]
 Description=Timer for {unit_name}
 
 [Timer]
-OnCalendar={when}
+{specs}
 
 [Install]
 WantedBy=timers.target
