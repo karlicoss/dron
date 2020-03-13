@@ -15,6 +15,7 @@ jobs:
               pyenv global 3.7.0
               python3 -m pip install --user --upgrade pip
 
+      - run: ./.ci/install-deps
       - run: python3 -m pip install --user pytest mypy pylint
 
       - run: python3 -m pip install --user -r requirements.txt
