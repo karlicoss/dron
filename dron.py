@@ -331,7 +331,10 @@ def test_managed_units():
     # shouldn't fail at least
     list(managed_units())
 
-    cmd_managed(long_=True)
+    # TODO ugh. doesn't work on circleci, fails with
+    # dbus.exceptions.DBusException: org.freedesktop.DBus.Error.BadAddress: Address does not contain a colon
+    if 'CI' not in os.environ:
+        cmd_managed(long_=True)
 
 
 def make_state(jobs: Iterable[Job]) -> State:
