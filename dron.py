@@ -327,7 +327,11 @@ def managed_units() -> State:
 
 def test_managed_units():
     skip_if_no_systemd()
-    list(managed_units()) # shouldn't fail at least
+
+    # shouldn't fail at least
+    list(managed_units())
+
+    cmd_managed(long_=True)
 
 
 def make_state(jobs: Iterable[Job]) -> State:
@@ -458,6 +462,7 @@ def apply_state(pending: State) -> None:
         write_unit(unit_file=ufile, body=a.body)
         if ufile.endswith('.timer'):
             logger.info('starting %s', ufile)
+            # TODO use enable --now??
             check_call(scu('start', ufile)) # dunno if it's worth restarting?
             check_call(scu('enable', ufile))
 
@@ -685,12 +690,43 @@ def cmd_apply(tabfile: Path) -> None:
     apply(tabfile)
 
 
-def cmd_managed():
+def _cmd_managed_long(managed):
+    import tabulate
+    from dbus import SessionBus, Interface, DBusException # type: ignore[import]
+    bus = SessionBus()  # TODO SystemBus for system??
+    systemd = bus.get_object('org.freedesktop.systemd1', '/org/freedesktop/systemd1')
+    manager = Interface(systemd, dbus_interface='org.freedesktop.systemd1.Manager')
+    lines = []
+    for u, _ in managed:
+        # service_unit = u if u.endswith('.service') else manager.GetUnit('{0}.service'.format(u))
+        # TODO for timers,
+        if u.endswith('.timer'):
+            # TODO not sure...
+            cmd = 'n/a'
+        else:
+            # TODO make defensive?
+            service_unit = manager.GetUnit(u)
+            service_proxy = bus.get_object('org.freedesktop.systemd1', str(service_unit))
+            service_properties = Interface(service_proxy, dbus_interface='org.freedesktop.DBus.Properties')
+            # service_load_state = service_properties.Get('org.freedesktop.systemd1.Unit', 'LoadState')
+            start = service_properties.Get('org.freedesktop.systemd1.Service', 'ExecStart')
+            # TODO careful... quoting will be wrong
+            cmd =  ' '.join([str(x) for x in start[0][1]])
+        lines.append([u, cmd])
+    print(tabulate.tabulate(lines, headers=['UNIT', 'COMMAND']))
+
+
+# TODO think if it's worth integrating with timers?
+def cmd_managed(long_: bool):
     managed = list(managed_units())
     if len(managed) == 0:
         print('No managed units!', file=sys.stderr)
-    for u, _ in managed:
-        print(u)
+    # TODO test long_ mode?
+    if long_:
+        _cmd_managed_long(managed)
+    else:
+        for u, _ in managed:
+            print(u)
 
 
 def cmd_timers():
@@ -791,7 +827,8 @@ I elaborate on what led me to implement it and motivation [[https://beepb00p.xyz
     '''
 
     sp = p.add_subparsers(dest='mode')
-    sp.add_parser('managed', help='List units managed by dron')
+    mp = sp.add_parser('managed', help='List units managed by dron')
+    mp.add_argument('--long', '-l', action='store_true', help='Longer listing format')
     sp.add_parser('timers', help='List all timers') # TODO timers doesn't really belong here?
     pp = sp.add_parser('past', help='List past job runs')
     pp.add_argument('unit', type=str) # TODO add shell completion?
@@ -825,8 +862,8 @@ def main():
         return tabfile
 
     if mode == 'managed':
-        cmd_managed()
-    elif mode == 'timers':
+        cmd_managed(long_=args.long)
+    elif mode == 'timers': # TODO rename to 'monitor'?
         cmd_timers()
     elif mode == 'past':
         cmd_past(unit=args.unit)
