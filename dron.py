@@ -730,11 +730,14 @@ def _cmd_managed_long(managed):
             last_dt = datetime.utcfromtimestamp(int(last)  / 10 ** 6)
             next_dt = datetime.utcfromtimestamp(int(next_) / 10 ** 6)
 
-            left = next_dt - UTCNOW
-            left = timedelta(seconds=left.seconds)
+            # chop off microseconds
+            left_delta = timedelta(seconds=(next_dt - UTCNOW).seconds)
+
+            passed_delta = timedelta(seconds=(UTCNOW - last_dt).seconds)
 
             # TODO color?
-            status = f'{str(left):<8} left'
+            left   = f'{str(left_delta  ):<8} left'
+            status = f'{str(passed_delta):<8} ago'
             cmd = f'next: {next_dt.isoformat()}; schedule: {spec}'
 
         else:
@@ -752,9 +755,11 @@ def _cmd_managed_long(managed):
             else:
                 color = 'red'
             status = termcolor.colored(status, color)
+            left = ''
 
-        lines.append([u, status, cmd])
-    print(tabulate.tabulate(lines, headers=['UNIT', 'STATUS/NEXT', 'COMMAND/SCHEDULE']))
+        lines.append([u, status, left, cmd])
+    # naming is consistent with systemctl --list-timers
+    print(tabulate.tabulate(lines, headers=['UNIT', 'STATUS/PASSED', 'LEFT', 'COMMAND/SCHEDULE']))
 
 
 # TODO think if it's worth integrating with timers?
