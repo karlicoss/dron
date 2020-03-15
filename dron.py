@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 import argparse
 from collections import OrderedDict
+from datetime import datetime, timedelta
 from difflib import unified_diff
 from itertools import tee
 import getpass
@@ -694,30 +695,54 @@ def cmd_apply(tabfile: Path) -> None:
 
 
 def _cmd_managed_long(managed):
+    # TODO reorder timers and services so timers go before?
+    sd = lambda s: f'org.freedesktop.systemd1{s}'
+
+    UTCNOW = datetime.utcnow()
+
     # TODO not sure what's difference from colorama?
     import termcolor
 
     import tabulate
     from dbus import SessionBus, Interface, DBusException # type: ignore[import]
     bus = SessionBus()  # TODO SystemBus for system??
-    systemd = bus.get_object('org.freedesktop.systemd1', '/org/freedesktop/systemd1')
-    manager = Interface(systemd, dbus_interface='org.freedesktop.systemd1.Manager')
+    systemd = bus.get_object(sd(''), '/org/freedesktop/systemd1')
+    manager = Interface(systemd, dbus_interface=sd('.Manager'))
     lines = []
     for u, _ in managed:
         # service_unit = u if u.endswith('.service') else manager.GetUnit('{0}.service'.format(u))
         # TODO for timers,
+        service_unit = manager.GetUnit(u)
+        service_proxy = bus.get_object(sd(''), str(service_unit))
+        properties = Interface(service_proxy, dbus_interface='org.freedesktop.DBus.Properties')
         if u.endswith('.timer'):
             # TODO not sure...
             cmd = 'n/a'
-            status = 'n/a'
+            status = 'n/a' # TODO could show smth?
+
+            cal   = properties.Get(sd('.Timer'), 'TimersCalendar')
+            last  = properties.Get(sd('.Timer'), 'LastTriggerUSec')
+            next_ = properties.Get(sd('.Timer'), 'NextElapseUSecRealtime')
+
+            spec = cal[0][1] # TODO is there a more reliable way to retrieve it??
+            # TODO not sure if last is really that useful..
+
+            last_dt = datetime.utcfromtimestamp(int(last)  / 10 ** 6)
+            next_dt = datetime.utcfromtimestamp(int(next_) / 10 ** 6)
+
+            left = next_dt - UTCNOW
+            left = timedelta(seconds=left.seconds)
+
+            # TODO color?
+            status = f'{str(left):<8} left'
+            cmd = f'next: {next_dt.isoformat()}; schedule: {spec}'
+
         else:
+            # TODO some summary too? e.g. how often in failed
             # TODO make defensive?
-            service_unit = manager.GetUnit(u)
-            service_proxy = bus.get_object('org.freedesktop.systemd1', str(service_unit))
-            service_properties = Interface(service_proxy, dbus_interface='org.freedesktop.DBus.Properties')
             # service_load_state = service_properties.Get('org.freedesktop.systemd1.Unit', 'LoadState')
-            exec_start = service_properties.Get('org.freedesktop.systemd1.Service', 'ExecStart')
-            result     = service_properties.Get('org.freedesktop.systemd1.Service', 'Result')
+            exec_start = properties.Get(sd('.Service'), 'ExecStart')
+            result     = properties.Get(sd('.Service'), 'Result')
             # TODO careful... quoting will be wrong
             cmd =  ' '.join([str(x) for x in exec_start[0][1]])
 
@@ -729,7 +754,7 @@ def _cmd_managed_long(managed):
             status = termcolor.colored(status, color)
 
         lines.append([u, status, cmd])
-    print(tabulate.tabulate(lines, headers=['UNIT', 'STATUS', 'COMMAND']))
+    print(tabulate.tabulate(lines, headers=['UNIT', 'STATUS/NEXT', 'COMMAND/SCHEDULE']))
 
 
 # TODO think if it's worth integrating with timers?
