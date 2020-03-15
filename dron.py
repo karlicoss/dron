@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 import argparse
 from collections import OrderedDict
+from datetime import datetime, timedelta
 from difflib import unified_diff
 from itertools import tee
 import getpass
@@ -694,29 +695,68 @@ def cmd_apply(tabfile: Path) -> None:
 
 
 def _cmd_managed_long(managed):
+    # TODO reorder timers and services so timers go before?
+    sd = lambda s: f'org.freedesktop.systemd1{s}'
+
+    UTCNOW = datetime.utcnow()
+
+    # TODO not sure what's difference from colorama?
+    import termcolor
+
     import tabulate
     from dbus import SessionBus, Interface, DBusException # type: ignore[import]
     bus = SessionBus()  # TODO SystemBus for system??
-    systemd = bus.get_object('org.freedesktop.systemd1', '/org/freedesktop/systemd1')
-    manager = Interface(systemd, dbus_interface='org.freedesktop.systemd1.Manager')
+    systemd = bus.get_object(sd(''), '/org/freedesktop/systemd1')
+    manager = Interface(systemd, dbus_interface=sd('.Manager'))
     lines = []
     for u, _ in managed:
-        # service_unit = u if u.endswith('.service') else manager.GetUnit('{0}.service'.format(u))
-        # TODO for timers,
+        service_unit = manager.GetUnit(u)
+        service_proxy = bus.get_object(sd(''), str(service_unit))
+        properties = Interface(service_proxy, dbus_interface='org.freedesktop.DBus.Properties')
+        ok = True
         if u.endswith('.timer'):
-            # TODO not sure...
             cmd = 'n/a'
+            status = 'n/a'
+
+            cal   = properties.Get(sd('.Timer'), 'TimersCalendar')
+            last  = properties.Get(sd('.Timer'), 'LastTriggerUSec')
+            next_ = properties.Get(sd('.Timer'), 'NextElapseUSecRealtime')
+
+            spec = cal[0][1] # TODO is there a more reliable way to retrieve it??
+            # TODO not sure if last is really that useful..
+
+            last_dt = datetime.utcfromtimestamp(int(last)  / 10 ** 6)
+            next_dt = datetime.utcfromtimestamp(int(next_) / 10 ** 6)
+
+            # chop off microseconds
+            left_delta = timedelta(seconds=(next_dt - UTCNOW).seconds)
+
+            passed_delta = timedelta(seconds=(UTCNOW - last_dt).seconds)
+
+            # TODO color?
+            left   = f'{str(left_delta  ):<8} left'
+            status = f'{str(passed_delta):<8} ago'
+            cmd = f'next: {next_dt.isoformat()}; schedule: {spec}'
         else:
+            # TODO some summary too? e.g. how often in failed
             # TODO make defensive?
-            service_unit = manager.GetUnit(u)
-            service_proxy = bus.get_object('org.freedesktop.systemd1', str(service_unit))
-            service_properties = Interface(service_proxy, dbus_interface='org.freedesktop.DBus.Properties')
-            # service_load_state = service_properties.Get('org.freedesktop.systemd1.Unit', 'LoadState')
-            start = service_properties.Get('org.freedesktop.systemd1.Service', 'ExecStart')
-            # TODO careful... quoting will be wrong
-            cmd =  ' '.join([str(x) for x in start[0][1]])
-        lines.append([u, cmd])
-    print(tabulate.tabulate(lines, headers=['UNIT', 'COMMAND']))
+            exec_start = properties.Get(sd('.Service'), 'ExecStart')
+            result     = properties.Get(sd('.Service'), 'Result')
+            cmd =  ' '.join(map(shlex.quote, exec_start[0][1]))
+
+            status = str(result)
+            if status == 'success':
+                color = 'green'
+            else:
+                color = 'red'
+                ok = True
+            status = termcolor.colored(status, color)
+            left = ''
+
+        lines.append((ok, [u, status, left, cmd]))
+    lines_ = [l for _, l in sorted(lines, key=lambda x: x[0])]
+    # naming is consistent with systemctl --list-timers
+    print(tabulate.tabulate(lines_, headers=['UNIT', 'STATUS/PASSED', 'LEFT', 'COMMAND/SCHEDULE']))
 
 
 # TODO think if it's worth integrating with timers?
@@ -831,7 +871,8 @@ I elaborate on what led me to implement it and motivation [[https://beepb00p.xyz
 
     sp = p.add_subparsers(dest='mode')
     mp = sp.add_parser('managed', help='List units managed by dron')
-    mp.add_argument('--long', '-l', action='store_true', help='Longer listing format')
+    mp.add_argument('--long', '-l' , action='store_true', help='Longer listing format')
+    mp.add_argument('--watch', '-w', action='store_true', help='Watch regularly')
     sp.add_parser('timers', help='List all timers') # TODO timers doesn't really belong here?
     pp = sp.add_parser('past', help='List past job runs')
     pp.add_argument('unit', type=str) # TODO add shell completion?
@@ -865,7 +906,21 @@ def main():
         return tabfile
 
     if mode == 'managed':
-        cmd_managed(long_=args.long)
+        # TODO hacky...
+        watch = args.watch
+        if watch:
+            argv = [a for a in sys.argv if a not in {'-w', '--watch'}]
+            os.execvp(
+                'watch',
+                [
+                    'watch',
+                    '--color',
+                    '-n', '1', # TODO make configurable?
+                    *argv,
+                ],
+            )
+        else:
+            cmd_managed(long_=args.long)
     elif mode == 'timers': # TODO rename to 'monitor'?
         cmd_timers()
     elif mode == 'past':
