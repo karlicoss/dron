@@ -696,7 +696,6 @@ def cmd_apply(tabfile: Path) -> None:
 
 def _cmd_managed_long(managed):
     # TODO reorder timers and services so timers go before?
-    # TODO reorder failed on top?
     sd = lambda s: f'org.freedesktop.systemd1{s}'
 
     UTCNOW = datetime.utcnow()
@@ -716,6 +715,7 @@ def _cmd_managed_long(managed):
         service_unit = manager.GetUnit(u)
         service_proxy = bus.get_object(sd(''), str(service_unit))
         properties = Interface(service_proxy, dbus_interface='org.freedesktop.DBus.Properties')
+        ok = True
         if u.endswith('.timer'):
             # TODO not sure...
             cmd = 'n/a'
@@ -740,7 +740,6 @@ def _cmd_managed_long(managed):
             left   = f'{str(left_delta  ):<8} left'
             status = f'{str(passed_delta):<8} ago'
             cmd = f'next: {next_dt.isoformat()}; schedule: {spec}'
-
         else:
             # TODO some summary too? e.g. how often in failed
             # TODO make defensive?
@@ -755,12 +754,14 @@ def _cmd_managed_long(managed):
                 color = 'green'
             else:
                 color = 'red'
+                ok = True
             status = termcolor.colored(status, color)
             left = ''
 
-        lines.append([u, status, left, cmd])
+        lines.append((ok, [u, status, left, cmd]))
+    lines_ = [l for _, l in sorted(lines, key=lambda x: x[0])]
     # naming is consistent with systemctl --list-timers
-    print(tabulate.tabulate(lines, headers=['UNIT', 'STATUS/PASSED', 'LEFT', 'COMMAND/SCHEDULE']))
+    print(tabulate.tabulate(lines_, headers=['UNIT', 'STATUS/PASSED', 'LEFT', 'COMMAND/SCHEDULE']))
 
 
 # TODO think if it's worth integrating with timers?
