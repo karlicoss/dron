@@ -694,6 +694,9 @@ def cmd_apply(tabfile: Path) -> None:
 
 
 def _cmd_managed_long(managed):
+    # TODO not sure what's difference from colorama?
+    import termcolor
+
     import tabulate
     from dbus import SessionBus, Interface, DBusException # type: ignore[import]
     bus = SessionBus()  # TODO SystemBus for system??
@@ -706,17 +709,27 @@ def _cmd_managed_long(managed):
         if u.endswith('.timer'):
             # TODO not sure...
             cmd = 'n/a'
+            status = 'n/a'
         else:
             # TODO make defensive?
             service_unit = manager.GetUnit(u)
             service_proxy = bus.get_object('org.freedesktop.systemd1', str(service_unit))
             service_properties = Interface(service_proxy, dbus_interface='org.freedesktop.DBus.Properties')
             # service_load_state = service_properties.Get('org.freedesktop.systemd1.Unit', 'LoadState')
-            start = service_properties.Get('org.freedesktop.systemd1.Service', 'ExecStart')
+            exec_start = service_properties.Get('org.freedesktop.systemd1.Service', 'ExecStart')
+            result     = service_properties.Get('org.freedesktop.systemd1.Service', 'Result')
             # TODO careful... quoting will be wrong
-            cmd =  ' '.join([str(x) for x in start[0][1]])
-        lines.append([u, cmd])
-    print(tabulate.tabulate(lines, headers=['UNIT', 'COMMAND']))
+            cmd =  ' '.join([str(x) for x in exec_start[0][1]])
+
+            status = str(result)
+            if status == 'success':
+                color = 'green'
+            else:
+                color = 'red'
+            status = termcolor.colored(status, color)
+
+        lines.append([u, status, cmd])
+    print(tabulate.tabulate(lines, headers=['UNIT', 'STATUS', 'COMMAND']))
 
 
 # TODO think if it's worth integrating with timers?
