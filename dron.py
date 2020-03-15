@@ -710,16 +710,13 @@ def _cmd_managed_long(managed):
     manager = Interface(systemd, dbus_interface=sd('.Manager'))
     lines = []
     for u, _ in managed:
-        # service_unit = u if u.endswith('.service') else manager.GetUnit('{0}.service'.format(u))
-        # TODO for timers,
         service_unit = manager.GetUnit(u)
         service_proxy = bus.get_object(sd(''), str(service_unit))
         properties = Interface(service_proxy, dbus_interface='org.freedesktop.DBus.Properties')
         ok = True
         if u.endswith('.timer'):
-            # TODO not sure...
             cmd = 'n/a'
-            status = 'n/a' # TODO could show smth?
+            status = 'n/a'
 
             cal   = properties.Get(sd('.Timer'), 'TimersCalendar')
             last  = properties.Get(sd('.Timer'), 'LastTriggerUSec')
@@ -743,11 +740,9 @@ def _cmd_managed_long(managed):
         else:
             # TODO some summary too? e.g. how often in failed
             # TODO make defensive?
-            # service_load_state = service_properties.Get('org.freedesktop.systemd1.Unit', 'LoadState')
             exec_start = properties.Get(sd('.Service'), 'ExecStart')
             result     = properties.Get(sd('.Service'), 'Result')
-            # TODO careful... quoting will be wrong
-            cmd =  ' '.join([str(x) for x in exec_start[0][1]])
+            cmd =  ' '.join(map(shlex.quote, exec_start[0][1]))
 
             status = str(result)
             if status == 'success':
