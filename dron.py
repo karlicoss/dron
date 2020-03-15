@@ -696,6 +696,7 @@ def cmd_apply(tabfile: Path) -> None:
 
 def _cmd_managed_long(managed):
     # TODO reorder timers and services so timers go before?
+    # TODO reorder failed on top?
     sd = lambda s: f'org.freedesktop.systemd1{s}'
 
     UTCNOW = datetime.utcnow()
@@ -874,7 +875,8 @@ I elaborate on what led me to implement it and motivation [[https://beepb00p.xyz
 
     sp = p.add_subparsers(dest='mode')
     mp = sp.add_parser('managed', help='List units managed by dron')
-    mp.add_argument('--long', '-l', action='store_true', help='Longer listing format')
+    mp.add_argument('--long', '-l' , action='store_true', help='Longer listing format')
+    mp.add_argument('--watch', '-w', action='store_true', help='Watch regularly')
     sp.add_parser('timers', help='List all timers') # TODO timers doesn't really belong here?
     pp = sp.add_parser('past', help='List past job runs')
     pp.add_argument('unit', type=str) # TODO add shell completion?
@@ -908,7 +910,21 @@ def main():
         return tabfile
 
     if mode == 'managed':
-        cmd_managed(long_=args.long)
+        # TODO hacky...
+        watch = args.watch
+        if watch:
+            argv = [a for a in sys.argv if a not in {'-w', '--watch'}]
+            os.execvp(
+                'watch',
+                [
+                    'watch',
+                    '--color',
+                    '-n', '1', # TODO make configurable?
+                    *argv,
+                ],
+            )
+        else:
+            cmd_managed(long_=args.long)
     elif mode == 'timers': # TODO rename to 'monitor'?
         cmd_timers()
     elif mode == 'past':
