@@ -703,12 +703,12 @@ def cmd_apply(tabfile: Path) -> None:
 
 
 def _from_usec(usec) -> datetime:
-    try:
-        return datetime.utcfromtimestamp(int(usec) / 10 ** 6)
-    except ValueError as e:
-        # ValueError: year 586524 is out of range
-        # FIXME eh, not sure what's the problem? I think it happens while a job is running??
+    u = int(usec)
+    if u == 2 ** 64 - 1: # apparently systemd uses max uint64
+        # happens if the job is running ATM?
         return datetime.max
+    else:
+        return datetime.utcfromtimestamp(u / 10 ** 6)
 
 
 class MonParams(NamedTuple):
