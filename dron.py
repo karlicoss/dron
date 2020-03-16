@@ -749,12 +749,14 @@ def _cmd_managed_long(managed):
             result     = properties.Get(sd('.Service'), 'Result')
             cmd =  ' '.join(map(shlex.quote, exec_start[0][1]))
 
-            status = str(result)
-            if status == 'success':
+            rate = _unit_success_rate(u)
+
+            if result == 'success':
                 color = 'green'
             else:
                 color = 'red'
                 ok = True
+            status = f'{result:<8} {rate:.2f}'
             status = termcolor.colored(status, color)
             left = ''
 
@@ -805,10 +807,10 @@ def _unit_success_rate(unit: Unit) -> float:
         ur = j.get('UNIT_RESULT')
         if jt is not None:
             assert ur is None
-            failed += 1
+            started += 1
         elif ur is not None:
             assert jt is None
-            started += 1
+            failed += 1
         else:
             # TODO eh? sometimes jobs also report Succeeded status
             # e.g. syncthing-paranoid
