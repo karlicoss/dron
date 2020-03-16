@@ -336,7 +336,7 @@ def test_managed_units():
     # TODO ugh. doesn't work on circleci, fails with
     # dbus.exceptions.DBusException: org.freedesktop.DBus.Error.BadAddress: Address does not contain a colon
     if 'CI' not in os.environ:
-        cmd_managed(long_=True, with_success_rate=True)
+        cmd_monitor(with_success_rate=True)
 
 
 def make_state(jobs: Iterable[Job]) -> State:
@@ -704,7 +704,7 @@ def _from_usec(usec) -> datetime:
         return datetime.max
 
 
-def _cmd_managed_long(managed, *, with_success_rate: bool):
+def _cmd_monitor(managed, *, with_success_rate: bool):
     # TODO reorder timers and services so timers go before?
     sd = lambda s: f'org.freedesktop.systemd1{s}'
 
@@ -776,16 +776,12 @@ def _cmd_managed_long(managed, *, with_success_rate: bool):
 
 
 # TODO think if it's worth integrating with timers?
-def cmd_managed(*, long_: bool, with_success_rate: bool):
+def cmd_monitor(*, with_success_rate: bool):
     managed = list(managed_units())
     if len(managed) == 0:
         print('No managed units!', file=sys.stderr)
-    # TODO test long_ mode?
-    if long_:
-        _cmd_managed_long(managed, with_success_rate=with_success_rate)
-    else:
-        for u, _ in managed:
-            print(u)
+    # TODO test it ?
+    _cmd_monitor(managed, with_success_rate=with_success_rate)
 
 
 def cmd_timers():
@@ -924,8 +920,7 @@ I elaborate on what led me to implement it and motivation [[https://beepb00p.xyz
     '''
 
     sp = p.add_subparsers(dest='mode')
-    mp = sp.add_parser('managed', help='List units managed by dron')
-    mp.add_argument('--long', '-l' , action='store_true', help='Longer listing format')
+    mp = sp.add_parser('monitor', help='Monitor services/timers managed by dron')
     mp.add_argument('--watch', '-w', action='store_true', help='Watch regularly')
     mp.add_argument('--rate'       , action='store_true', help='Display success rate (unstable and potentially slow)')
     sp.add_parser('timers', help='List all timers') # TODO timers doesn't really belong here?
@@ -960,7 +955,7 @@ def main():
             tabfile = DRONTAB
         return tabfile
 
-    if mode == 'managed':
+    if mode == 'monitor':
         # TODO hacky...
         watch = args.watch
         if watch:
@@ -975,8 +970,7 @@ def main():
                 ],
             )
         else:
-            # TODO eh. maybe make long the default..
-            cmd_managed(long_=args.long, with_success_rate=args.rate)
+            cmd_monitor(with_success_rate=args.rate)
     elif mode == 'timers': # TODO rename to 'monitor'?
         cmd_timers()
     elif mode == 'past':
