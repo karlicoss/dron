@@ -336,7 +336,7 @@ def test_managed_units():
     # TODO ugh. doesn't work on circleci, fails with
     # dbus.exceptions.DBusException: org.freedesktop.DBus.Error.BadAddress: Address does not contain a colon
     if 'CI' not in os.environ:
-        cmd_managed(long_=True)
+        cmd_managed(long_=True, with_success_rate=True)
 
 
 def make_state(jobs: Iterable[Job]) -> State:
@@ -699,7 +699,7 @@ def _from_usec(usec) -> datetime:
     return datetime.utcfromtimestamp(int(usec) / 10 ** 6)
 
 
-def _cmd_managed_long(managed):
+def _cmd_managed_long(managed, *, with_success_rate: bool):
     # TODO reorder timers and services so timers go before?
     sd = lambda s: f'org.freedesktop.systemd1{s}'
 
@@ -749,14 +749,18 @@ def _cmd_managed_long(managed):
             result     = properties.Get(sd('.Service'), 'Result')
             cmd =  ' '.join(map(shlex.quote, exec_start[0][1]))
 
-            rate = _unit_success_rate(u)
+            if with_success_rate:
+                rate = _unit_success_rate(u)
+                rates = f' {rate:.2f}'
+            else:
+                rates = ''
 
             if result == 'success':
                 color = 'green'
             else:
                 color = 'red'
                 ok = True
-            status = f'{result:<8} {rate:.2f}'
+            status = f'{result:<8}{rates}'
             status = termcolor.colored(status, color)
             left = ''
 
@@ -767,13 +771,13 @@ def _cmd_managed_long(managed):
 
 
 # TODO think if it's worth integrating with timers?
-def cmd_managed(long_: bool):
+def cmd_managed(*, long_: bool, with_success_rate: bool):
     managed = list(managed_units())
     if len(managed) == 0:
         print('No managed units!', file=sys.stderr)
     # TODO test long_ mode?
     if long_:
-        _cmd_managed_long(managed)
+        _cmd_managed_long(managed, with_success_rate=with_success_rate)
     else:
         for u, _ in managed:
             print(u)
@@ -918,6 +922,7 @@ I elaborate on what led me to implement it and motivation [[https://beepb00p.xyz
     mp = sp.add_parser('managed', help='List units managed by dron')
     mp.add_argument('--long', '-l' , action='store_true', help='Longer listing format')
     mp.add_argument('--watch', '-w', action='store_true', help='Watch regularly')
+    mp.add_argument('--rate'       , action='store_true', help='Display success rate (unstable and potentially slow)')
     sp.add_parser('timers', help='List all timers') # TODO timers doesn't really belong here?
     pp = sp.add_parser('past', help='List past job runs')
     pp.add_argument('unit', type=str) # TODO add shell completion?
@@ -965,7 +970,8 @@ def main():
                 ],
             )
         else:
-            cmd_managed(long_=args.long)
+            # TODO eh. maybe make long the default..
+            cmd_managed(long_=args.long, with_success_rate=args.rate)
     elif mode == 'timers': # TODO rename to 'monitor'?
         cmd_timers()
     elif mode == 'past':
