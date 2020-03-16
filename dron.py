@@ -695,6 +695,10 @@ def cmd_apply(tabfile: Path) -> None:
     apply(tabfile)
 
 
+def _from_usec(usec) -> datetime:
+    return datetime.utcfromtimestamp(int(usec) / 10 ** 6)
+
+
 def _cmd_managed_long(managed):
     # TODO reorder timers and services so timers go before?
     sd = lambda s: f'org.freedesktop.systemd1{s}'
@@ -726,8 +730,8 @@ def _cmd_managed_long(managed):
             spec = cal[0][1] # TODO is there a more reliable way to retrieve it??
             # TODO not sure if last is really that useful..
 
-            last_dt = datetime.utcfromtimestamp(int(last)  / 10 ** 6)
-            next_dt = datetime.utcfromtimestamp(int(next_) / 10 ** 6)
+            last_dt = _from_usec(last)
+            next_dt = _from_usec(next_)
 
             # chop off microseconds
             left_delta = timedelta(seconds=(next_dt - UTCNOW).seconds)
@@ -777,14 +781,10 @@ def cmd_timers():
     os.execvp('watch', ['watch', '-n', '0.5', ' '.join(scu('list-timers', '--all'))])
 
 
-def cmd_past(unit: str):
-    # meh
+Json = Dict[str, Any]
+def _unit_logs(unit: Unit) -> Iterator[Json]:
     # TODO so do I need to parse logs to get failure stats? perhaps json would be more reliable
-    cmd = f'journalctl --user -u {unit} -o json -t systemd --output-fields UNIT_RESULT,JOB_TYPE'
-    # TODO not sure if the stats belong here..
-    started = 0
-    failed  = 0
-    # TODO not sure how much time it takes to query all journals?
+    cmd = f'journalctl --user -u {unit} -o json -t systemd --output-fields UNIT_RESULT,JOB_TYPE,MESSAGE'
     with Popen(cmd.split(), stdout=PIPE) as po:
         stdout = po.stdout; assert stdout is not None
         for line in stdout:
@@ -793,13 +793,38 @@ def cmd_past(unit: str):
             jt = j.get('JOB_TYPE')
             ur = j.get('UNIT_RESULT')
             # not sure about this..
-            assert (jt is None) ^ (ur is None), j
-            if jt is not None:
-                started += 1
-            else:
-                failed += 1
-            # if res is not set, it must have been 'unit started' message??
-    print(started, failed)
+            yield j
+
+
+def _unit_success_rate(unit: Unit) -> float:
+    started = 0
+    failed  = 0
+    # TODO not sure how much time it takes to query all journals?
+    for j in _unit_logs(unit):
+        jt = j.get('JOB_TYPE')
+        ur = j.get('UNIT_RESULT')
+        if jt is not None:
+            assert ur is None
+            failed += 1
+        elif ur is not None:
+            assert jt is None
+            started += 1
+        else:
+            # TODO eh? sometimes jobs also report Succeeded status
+            # e.g. syncthing-paranoid
+            pass
+    if started == 0:
+        assert failed == 0, unit
+        return 1.0
+    success = started - failed
+    return success / started
+
+
+def cmd_past(unit: Unit):
+    for j in _unit_logs(unit):
+        ts = _from_usec(j['__REALTIME_TIMESTAMP'])
+        msg = j['MESSAGE']
+        print(ts.isoformat(), msg)
 
 
 class VerifyOff(argparse.Action):
