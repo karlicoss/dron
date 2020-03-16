@@ -4,13 +4,14 @@ from collections import OrderedDict
 from datetime import datetime, timedelta
 from difflib import unified_diff
 from itertools import tee
+import json
 import getpass
 import os
 import sys
 from pathlib import Path
 import shlex
 import shutil
-from subprocess import check_call, CalledProcessError, run, PIPE, check_output
+from subprocess import check_call, CalledProcessError, run, PIPE, check_output, Popen
 from tempfile import NamedTemporaryFile, TemporaryDirectory
 from typing import NamedTuple, Union, Sequence, Optional, Iterator, Tuple, Iterable, List, Any, Dict
 
@@ -779,9 +780,26 @@ def cmd_timers():
 def cmd_past(unit: str):
     # meh
     # TODO so do I need to parse logs to get failure stats? perhaps json would be more reliable
-    cmd = f'journalctl --user -u {unit} | grep systemd'
-    print(cmd)
-    os.execvp('bash', ['bash', '-c', cmd])
+    cmd = f'journalctl --user -u {unit} -o json -t systemd --output-fields UNIT_RESULT,JOB_TYPE'
+    # TODO not sure if the stats belong here..
+    started = 0
+    failed  = 0
+    # TODO not sure how much time it takes to query all journals?
+    with Popen(cmd.split(), stdout=PIPE) as po:
+        stdout = po.stdout; assert stdout is not None
+        for line in stdout:
+            j = json.loads(line.decode('utf8'))
+            # apparently, successful runs aren't getting logged? not sure why
+            jt = j.get('JOB_TYPE')
+            ur = j.get('UNIT_RESULT')
+            # not sure about this..
+            assert (jt is None) ^ (ur is None), j
+            if jt is not None:
+                started += 1
+            else:
+                failed += 1
+            # if res is not set, it must have been 'unit started' message??
+    print(started, failed)
 
 
 class VerifyOff(argparse.Action):
