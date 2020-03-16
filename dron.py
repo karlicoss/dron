@@ -696,7 +696,12 @@ def cmd_apply(tabfile: Path) -> None:
 
 
 def _from_usec(usec) -> datetime:
-    return datetime.utcfromtimestamp(int(usec) / 10 ** 6)
+    try:
+        return datetime.utcfromtimestamp(int(usec) / 10 ** 6)
+    except ValueError as e:
+        # ValueError: year 586524 is out of range
+        # FIXME eh, not sure what's the problem? I think it happens while a job is running??
+        return datetime.max
 
 
 def _cmd_managed_long(managed, *, with_success_rate: bool):
