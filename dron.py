@@ -3,7 +3,7 @@ import argparse
 from collections import OrderedDict
 from datetime import datetime, timedelta
 from difflib import unified_diff
-from itertools import tee
+from itertools import tee, groupby
 import json
 import getpass
 import os
@@ -712,21 +712,31 @@ def _cmd_monitor(managed, *, with_success_rate: bool):
 
     # TODO not sure what's difference from colorama?
     import termcolor
-
     import tabulate
+
     from dbus import SessionBus, Interface, DBusException # type: ignore[import]
     bus = SessionBus()  # TODO SystemBus for system??
     systemd = bus.get_object(sd(''), '/org/freedesktop/systemd1')
     manager = Interface(systemd, dbus_interface=sd('.Manager'))
-    lines = []
-    for u, _ in managed:
+
+    def unit_properties(u: Unit):
         service_unit = manager.GetUnit(u)
         service_proxy = bus.get_object(sd(''), str(service_unit))
         properties = Interface(service_proxy, dbus_interface='org.freedesktop.DBus.Properties')
+        return properties
+
+
+    lines = []
+    names = (u for u, _ in managed)
+    uname = lambda full: full.split('.')[0] # TODO not very relibable..
+    for k, gr in groupby(names, key=uname):
+        [service, timer] = gr
         ok = True
-        if u.endswith('.timer'):
+        if True: # just preserve old indentation..
             cmd = 'n/a'
             status = 'n/a'
+
+            properties = unit_properties(timer)
 
             cal   = properties.Get(sd('.Timer'), 'TimersCalendar')
             last  = properties.Get(sd('.Timer'), 'LastTriggerUSec')
@@ -744,18 +754,20 @@ def _cmd_monitor(managed, *, with_success_rate: bool):
             passed_delta = timedelta(seconds=(UTCNOW - last_dt).seconds)
 
             # TODO color?
-            left   = f'{str(left_delta  ):<8} left'
-            status = f'{str(passed_delta):<8} ago'
-            cmd = f'next: {next_dt.isoformat()}; schedule: {spec}'
-        else:
+        left   = f'{str(left_delta  ):<8} left'
+        ago    = f'{str(passed_delta):<8} ago'
+        schedule = f'next: {next_dt.isoformat()}; schedule: {spec}'
+
+        if True: # just preserve indentaion..
+            properties = unit_properties(service)
             # TODO some summary too? e.g. how often in failed
             # TODO make defensive?
             exec_start = properties.Get(sd('.Service'), 'ExecStart')
             result     = properties.Get(sd('.Service'), 'Result')
-            cmd =  ' '.join(map(shlex.quote, exec_start[0][1]))
+            command =  ' '.join(map(shlex.quote, exec_start[0][1]))
 
             if with_success_rate:
-                rate = _unit_success_rate(u)
+                rate = _unit_success_rate(service)
                 rates = f' {rate:.2f}'
             else:
                 rates = ''
@@ -765,11 +777,13 @@ def _cmd_monitor(managed, *, with_success_rate: bool):
             else:
                 color = 'red'
                 ok = True
-            status = f'{result:<8}{rates}'
-            status = termcolor.colored(status, color)
-            left = ''
 
-        lines.append((ok, [u, status, left, cmd]))
+        status = f'{result:<9} {ago}{rates}'
+        status = termcolor.colored(status, color)
+
+        # TODO FIXME handle command later..
+
+        lines.append((ok, [k, status, left, schedule]))
     lines_ = [l for _, l in sorted(lines, key=lambda x: x[0])]
     # naming is consistent with systemctl --list-timers
     print(tabulate.tabulate(lines_, headers=['UNIT', 'STATUS/PASSED', 'LEFT', 'COMMAND/SCHEDULE']))
