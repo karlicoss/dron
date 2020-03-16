@@ -3,14 +3,15 @@ import argparse
 from collections import OrderedDict
 from datetime import datetime, timedelta
 from difflib import unified_diff
-from itertools import tee
+from itertools import tee, groupby
+import json
 import getpass
 import os
 import sys
 from pathlib import Path
 import shlex
 import shutil
-from subprocess import check_call, CalledProcessError, run, PIPE, check_output
+from subprocess import check_call, CalledProcessError, run, PIPE, check_output, Popen
 from tempfile import NamedTemporaryFile, TemporaryDirectory
 from typing import NamedTuple, Union, Sequence, Optional, Iterator, Tuple, Iterable, List, Any, Dict
 
@@ -335,7 +336,7 @@ def test_managed_units():
     # TODO ugh. doesn't work on circleci, fails with
     # dbus.exceptions.DBusException: org.freedesktop.DBus.Error.BadAddress: Address does not contain a colon
     if 'CI' not in os.environ:
-        cmd_managed(long_=True)
+        cmd_monitor(MonParams(with_success_rate=True, with_command=True))
 
 
 def make_state(jobs: Iterable[Job]) -> State:
@@ -694,7 +695,21 @@ def cmd_apply(tabfile: Path) -> None:
     apply(tabfile)
 
 
-def _cmd_managed_long(managed):
+def _from_usec(usec) -> datetime:
+    try:
+        return datetime.utcfromtimestamp(int(usec) / 10 ** 6)
+    except ValueError as e:
+        # ValueError: year 586524 is out of range
+        # FIXME eh, not sure what's the problem? I think it happens while a job is running??
+        return datetime.max
+
+
+class MonParams(NamedTuple):
+    with_success_rate: bool
+    with_command: bool
+
+
+def _cmd_monitor(managed, *, params: MonParams):
     # TODO reorder timers and services so timers go before?
     sd = lambda s: f'org.freedesktop.systemd1{s}'
 
@@ -702,21 +717,31 @@ def _cmd_managed_long(managed):
 
     # TODO not sure what's difference from colorama?
     import termcolor
-
     import tabulate
+
     from dbus import SessionBus, Interface, DBusException # type: ignore[import]
     bus = SessionBus()  # TODO SystemBus for system??
     systemd = bus.get_object(sd(''), '/org/freedesktop/systemd1')
     manager = Interface(systemd, dbus_interface=sd('.Manager'))
-    lines = []
-    for u, _ in managed:
+
+    def unit_properties(u: Unit):
         service_unit = manager.GetUnit(u)
         service_proxy = bus.get_object(sd(''), str(service_unit))
         properties = Interface(service_proxy, dbus_interface='org.freedesktop.DBus.Properties')
+        return properties
+
+
+    lines = []
+    names = (u for u, _ in managed)
+    uname = lambda full: full.split('.')[0] # TODO not very relibable..
+    for k, gr in groupby(names, key=uname):
+        [service, timer] = gr
         ok = True
-        if u.endswith('.timer'):
+        if True: # just preserve old indentation..
             cmd = 'n/a'
             status = 'n/a'
+
+            properties = unit_properties(timer)
 
             cal   = properties.Get(sd('.Timer'), 'TimersCalendar')
             last  = properties.Get(sd('.Timer'), 'LastTriggerUSec')
@@ -725,8 +750,8 @@ def _cmd_managed_long(managed):
             spec = cal[0][1] # TODO is there a more reliable way to retrieve it??
             # TODO not sure if last is really that useful..
 
-            last_dt = datetime.utcfromtimestamp(int(last)  / 10 ** 6)
-            next_dt = datetime.utcfromtimestamp(int(next_) / 10 ** 6)
+            last_dt = _from_usec(last)
+            next_dt = _from_usec(next_)
 
             # chop off microseconds
             left_delta = timedelta(seconds=(next_dt - UTCNOW).seconds)
@@ -734,54 +759,100 @@ def _cmd_managed_long(managed):
             passed_delta = timedelta(seconds=(UTCNOW - last_dt).seconds)
 
             # TODO color?
-            left   = f'{str(left_delta  ):<8} left'
-            status = f'{str(passed_delta):<8} ago'
-            cmd = f'next: {next_dt.isoformat()}; schedule: {spec}'
-        else:
+        left   = f'{str(left_delta  ):<8} left'
+        ago    = f'{str(passed_delta):<8} ago'
+        schedule = f'next: {next_dt.isoformat()}; schedule: {spec}'
+
+        if True: # just preserve indentaion..
+            properties = unit_properties(service)
             # TODO some summary too? e.g. how often in failed
             # TODO make defensive?
             exec_start = properties.Get(sd('.Service'), 'ExecStart')
             result     = properties.Get(sd('.Service'), 'Result')
-            cmd =  ' '.join(map(shlex.quote, exec_start[0][1]))
+            command =  ' '.join(map(shlex.quote, exec_start[0][1]))
 
-            status = str(result)
-            if status == 'success':
+            if params.with_success_rate:
+                rate = _unit_success_rate(service)
+                rates = f' {rate:.2f}'
+            else:
+                rates = ''
+
+            if result == 'success':
                 color = 'green'
             else:
                 color = 'red'
                 ok = True
-            status = termcolor.colored(status, color)
-            left = ''
 
-        lines.append((ok, [u, status, left, cmd]))
+        status = f'{result:<9} {ago}{rates}'
+        status = termcolor.colored(status, color)
+
+        xx = [schedule]
+        if params.with_command:
+            xx.append(command)
+
+        lines.append((ok, [k, status, left, '\n'.join(xx)]))
     lines_ = [l for _, l in sorted(lines, key=lambda x: x[0])]
     # naming is consistent with systemctl --list-timers
     print(tabulate.tabulate(lines_, headers=['UNIT', 'STATUS/PASSED', 'LEFT', 'COMMAND/SCHEDULE']))
 
 
 # TODO think if it's worth integrating with timers?
-def cmd_managed(long_: bool):
+def cmd_monitor(params: MonParams):
     managed = list(managed_units())
     if len(managed) == 0:
         print('No managed units!', file=sys.stderr)
-    # TODO test long_ mode?
-    if long_:
-        _cmd_managed_long(managed)
-    else:
-        for u, _ in managed:
-            print(u)
+    # TODO test it ?
+    _cmd_monitor(managed, params=params)
 
 
 def cmd_timers():
     os.execvp('watch', ['watch', '-n', '0.5', ' '.join(scu('list-timers', '--all'))])
 
 
-def cmd_past(unit: str):
-    # meh
+Json = Dict[str, Any]
+def _unit_logs(unit: Unit) -> Iterator[Json]:
     # TODO so do I need to parse logs to get failure stats? perhaps json would be more reliable
-    cmd = f'journalctl --user -u {unit} | grep systemd'
-    print(cmd)
-    os.execvp('bash', ['bash', '-c', cmd])
+    cmd = f'journalctl --user -u {unit} -o json -t systemd --output-fields UNIT_RESULT,JOB_TYPE,MESSAGE'
+    with Popen(cmd.split(), stdout=PIPE) as po:
+        stdout = po.stdout; assert stdout is not None
+        for line in stdout:
+            j = json.loads(line.decode('utf8'))
+            # apparently, successful runs aren't getting logged? not sure why
+            jt = j.get('JOB_TYPE')
+            ur = j.get('UNIT_RESULT')
+            # not sure about this..
+            yield j
+
+
+def _unit_success_rate(unit: Unit) -> float:
+    started = 0
+    failed  = 0
+    # TODO not sure how much time it takes to query all journals?
+    for j in _unit_logs(unit):
+        jt = j.get('JOB_TYPE')
+        ur = j.get('UNIT_RESULT')
+        if jt is not None:
+            assert ur is None
+            started += 1
+        elif ur is not None:
+            assert jt is None
+            failed += 1
+        else:
+            # TODO eh? sometimes jobs also report Succeeded status
+            # e.g. syncthing-paranoid
+            pass
+    if started == 0:
+        assert failed == 0, unit
+        return 1.0
+    success = started - failed
+    return success / started
+
+
+def cmd_past(unit: Unit):
+    for j in _unit_logs(unit):
+        ts = _from_usec(j['__REALTIME_TIMESTAMP'])
+        msg = j['MESSAGE']
+        print(ts.isoformat(), msg)
 
 
 class VerifyOff(argparse.Action):
@@ -823,7 +894,6 @@ def jobs():
         unit_name='ping-beepb00p',
     )
 '''.lstrip()
-
 
 
 def make_parser():
@@ -870,9 +940,10 @@ I elaborate on what led me to implement it and motivation [[https://beepb00p.xyz
     '''
 
     sp = p.add_subparsers(dest='mode')
-    mp = sp.add_parser('managed', help='List units managed by dron')
-    mp.add_argument('--long', '-l' , action='store_true', help='Longer listing format')
+    mp = sp.add_parser('monitor', help='Monitor services/timers managed by dron')
     mp.add_argument('--watch', '-w', action='store_true', help='Watch regularly')
+    mp.add_argument('--rate'       , action='store_true', help='Display success rate (unstable and potentially slow)')
+    mp.add_argument('--command'    , action='store_true', help='Display command')
     sp.add_parser('timers', help='List all timers') # TODO timers doesn't really belong here?
     pp = sp.add_parser('past', help='List past job runs')
     pp.add_argument('unit', type=str) # TODO add shell completion?
@@ -905,7 +976,7 @@ def main():
             tabfile = DRONTAB
         return tabfile
 
-    if mode == 'managed':
+    if mode == 'monitor':
         # TODO hacky...
         watch = args.watch
         if watch:
@@ -920,7 +991,11 @@ def main():
                 ],
             )
         else:
-            cmd_managed(long_=args.long)
+            params = MonParams(
+                with_success_rate=args.rate,
+                with_command=args.command,
+            )
+            cmd_monitor(params)
     elif mode == 'timers': # TODO rename to 'monitor'?
         cmd_timers()
     elif mode == 'past':
