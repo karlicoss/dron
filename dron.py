@@ -472,6 +472,12 @@ def apply_state(pending: State) -> None:
         logger.info('adding %s', ufile)
         # TODO when we add, assert that previous unit wasn't managed? otherwise we overwrite something
         write_unit(unit_file=ufile, body=a.body)
+
+    reload()
+
+    # need to load everything befor starting the timer..
+    for a in adds:
+        ufile = a.unit_file
         if ufile.endswith('.timer'):
             logger.info('starting %s', ufile)
             # TODO use enable --now??
