@@ -336,7 +336,7 @@ def test_managed_units():
     # TODO ugh. doesn't work on circleci, fails with
     # dbus.exceptions.DBusException: org.freedesktop.DBus.Error.BadAddress: Address does not contain a colon
     if 'CI' not in os.environ:
-        cmd_monitor(with_success_rate=True)
+        cmd_monitor(MonParams(with_success_rate=True, with_command=True))
 
 
 def make_state(jobs: Iterable[Job]) -> State:
@@ -704,7 +704,12 @@ def _from_usec(usec) -> datetime:
         return datetime.max
 
 
-def _cmd_monitor(managed, *, with_success_rate: bool):
+class MonParams(NamedTuple):
+    with_success_rate: bool
+    with_command: bool
+
+
+def _cmd_monitor(managed, *, params: MonParams):
     # TODO reorder timers and services so timers go before?
     sd = lambda s: f'org.freedesktop.systemd1{s}'
 
@@ -766,7 +771,7 @@ def _cmd_monitor(managed, *, with_success_rate: bool):
             result     = properties.Get(sd('.Service'), 'Result')
             command =  ' '.join(map(shlex.quote, exec_start[0][1]))
 
-            if with_success_rate:
+            if params.with_success_rate:
                 rate = _unit_success_rate(service)
                 rates = f' {rate:.2f}'
             else:
@@ -781,21 +786,23 @@ def _cmd_monitor(managed, *, with_success_rate: bool):
         status = f'{result:<9} {ago}{rates}'
         status = termcolor.colored(status, color)
 
-        # TODO FIXME handle command later..
+        xx = [schedule]
+        if params.with_command:
+            xx.append(command)
 
-        lines.append((ok, [k, status, left, schedule]))
+        lines.append((ok, [k, status, left, '\n'.join(xx)]))
     lines_ = [l for _, l in sorted(lines, key=lambda x: x[0])]
     # naming is consistent with systemctl --list-timers
     print(tabulate.tabulate(lines_, headers=['UNIT', 'STATUS/PASSED', 'LEFT', 'COMMAND/SCHEDULE']))
 
 
 # TODO think if it's worth integrating with timers?
-def cmd_monitor(*, with_success_rate: bool):
+def cmd_monitor(params: MonParams):
     managed = list(managed_units())
     if len(managed) == 0:
         print('No managed units!', file=sys.stderr)
     # TODO test it ?
-    _cmd_monitor(managed, with_success_rate=with_success_rate)
+    _cmd_monitor(managed, params=params)
 
 
 def cmd_timers():
@@ -889,7 +896,6 @@ def jobs():
 '''.lstrip()
 
 
-
 def make_parser():
     def add_verify(p):
         # ugh. might be broken on bionic :(
@@ -937,6 +943,7 @@ I elaborate on what led me to implement it and motivation [[https://beepb00p.xyz
     mp = sp.add_parser('monitor', help='Monitor services/timers managed by dron')
     mp.add_argument('--watch', '-w', action='store_true', help='Watch regularly')
     mp.add_argument('--rate'       , action='store_true', help='Display success rate (unstable and potentially slow)')
+    mp.add_argument('--command'    , action='store_true', help='Display command')
     sp.add_parser('timers', help='List all timers') # TODO timers doesn't really belong here?
     pp = sp.add_parser('past', help='List past job runs')
     pp.add_argument('unit', type=str) # TODO add shell completion?
@@ -984,7 +991,11 @@ def main():
                 ],
             )
         else:
-            cmd_monitor(with_success_rate=args.rate)
+            params = MonParams(
+                with_success_rate=args.rate,
+                with_command=args.command,
+            )
+            cmd_monitor(params)
     elif mode == 'timers': # TODO rename to 'monitor'?
         cmd_timers()
     elif mode == 'past':
