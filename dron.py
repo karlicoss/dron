@@ -13,7 +13,7 @@ import shlex
 import shutil
 from subprocess import check_call, CalledProcessError, run, PIPE, check_output, Popen
 from tempfile import NamedTemporaryFile, TemporaryDirectory
-from typing import NamedTuple, Union, Sequence, Optional, Iterator, Tuple, Iterable, List, Any, Dict
+from typing import NamedTuple, Union, Sequence, Optional, Iterator, Tuple, Iterable, List, Any, Dict, Set
 
 
 # TODO not sure about click..
@@ -344,15 +344,22 @@ def make_state(jobs: Iterable[Job]) -> State:
         verify(unit_file=unit_file, body=body)
         return (unit_file, body)
 
+    names: Set[Unit] = set()
+
     for j in jobs:
-        s = service(unit_name=j.unit_name, command=j.command, **j.kwargs)
-        yield check(j.unit_name + '.service', s)
+        uname = j.unit_name
+
+        assert uname not in names, j
+        names.add(uname)
+
+        s = service(unit_name=uname, command=j.command, **j.kwargs)
+        yield check(uname + '.service', s)
 
         when = j.when
         if when is None:
             continue
-        t = timer(unit_name=j.unit_name, when=when)
-        yield check(j.unit_name + '.timer', t)
+        t = timer(unit_name=uname, when=when)
+        yield check(uname + '.timer', t)
 
     # TODO otherwise just unit status or something?
 
