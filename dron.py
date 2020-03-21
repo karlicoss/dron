@@ -93,12 +93,12 @@ def scu(*args):
     return ['systemctl', '--user', *args]
 
 
-def scu_enable(unit_file: UnitFile):
-    return scu('enable', unit_file)
+def scu_enable(unit_file: UnitFile, *args):
+    return scu('enable', unit_file, *args)
 
 
-def scu_start(unit: Unit):
-    return scu('start', unit)
+def scu_start(unit: Unit, *args):
+    return scu('start', unit, *args)
 
 
 def reload():
@@ -511,19 +511,24 @@ def apply_state(pending: State) -> None:
         # TODO when we add, assert that previous unit wasn't managed? otherwise we overwrite something
         write_unit(unit=a.unit, body=a.body)
 
-    reload()
+    # TODO need to enable services??
 
-    # need to load everything befor starting the timer..
+    # need to load units before starting the timers..
+    reload()
+   
     for a in adds:
         unit_file = a.unit_file
         unit = unit_file.name
-        if unit.endswith('.timer'):
-            logger.info('starting %s', unit)
-            # TODO use enable --now??
-            check_call(scu_start(unit)) # dunno if it's worth restarting?
-            # TODO enable should be first??
-            check_call(scu_enable(unit_file))
+        logger.info('enabling %s', unit)
+        if unit.endswith('.service'):
+            # quiet here because it warns that "The unit files have no installation config"
+            check_call(scu_enable(unit_file, '--quiet'))
+        elif unit.endswith('.timer'):
+            check_call(scu_enable(unit_file, '--now'))
+        else:
+            raise AssertionError(a)
 
+    # TODO not sure if this reload is even necessary??
     reload()
 
 
