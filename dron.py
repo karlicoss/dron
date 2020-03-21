@@ -29,7 +29,11 @@ else:
     # TODO need bit less verbose logging
     logger = LazyLogger('dron', level='debug')
 
-DIR = Path("~/.config/systemd/user").expanduser()
+
+DEFAULT_DIR = Path("~/.config/systemd/user").expanduser()
+DIR = DEFAULT_DIR
+
+
 # TODO FIXME mkdir in case it doesn't exist?
 
 
@@ -80,8 +84,21 @@ def handle_systemd():
         VERIFY_UNITS = True
 
 
+Unit = str
+Body = str
+UnitFile = Path
+
+
 def scu(*args):
     return ['systemctl', '--user', *args]
+
+
+def scu_enable(unit_file: UnitFile):
+    return scu('enable', unit_file)
+
+
+def scu_start(unit: Unit):
+    return scu('start', unit)
 
 
 def reload():
@@ -108,7 +125,7 @@ def test_managed(handle_systemd):
 [Service]
 ExecStart=/bin/echo 123
 '''
-    verify(unit_file='other.service', body=custom) # precondition
+    verify(unit='other.service', body=custom) # precondition
     assert not is_managed(custom)
 
 
@@ -174,15 +191,17 @@ ExecStart={cmd}
     return res
 
 
-def verify(*, unit_file: str, body: str):
+def verify(*, unit: PathIsh, body: str):
     if not VERIFY_UNITS:
         return
+
+    unit_name = Path(unit).name
 
     # ugh. pipe doesn't work??
     # e.g. 'systemd-analyze --user verify <(cat systemdtab-test.service)' results in:
     # Failed to prepare filename /proc/self/fd/11: Invalid argument
     with TemporaryDirectory() as tdir:
-        sfile = Path(tdir) / unit_file
+        sfile = Path(tdir) / unit_name
         sfile.write_text(body)
         res = run(['systemd-analyze', '--user', 'verify', str(sfile)], stdout=PIPE, stderr=PIPE)
         # ugh. apparently even exit code 1 doesn't guarantee correct output??
@@ -196,7 +215,7 @@ def verify(*, unit_file: str, body: str):
         # TODO UGH.
         # is not executable: No such file or directory
 
-        msg = f'failed checking {unit_file}, exit code {res.returncode}'
+        msg = f'failed checking {unit_name}, exit code {res.returncode}'
         logger.error(msg)
         print(body, file=sys.stderr)
         print('systemd-analyze output:', file=sys.stderr)
@@ -211,10 +230,10 @@ def test_verify(handle_systemd):
     def fails(body: str):
         import pytest # type: ignore[import]
         with pytest.raises(Exception):
-            verify(unit_file='whatever.service', body=body)
+            verify(unit='whatever.service', body=body)
 
     def ok(body):
-        verify(unit_file='ok.service', body=body)
+        verify(unit='ok.service', body=body)
 
     ok(body='''
 [Service]
@@ -239,11 +258,13 @@ StandardOutput=baaad
 ''')
 
 
-def write_unit(*, unit_file: str, body: str) -> None:
+def write_unit(*, unit: Unit, body: Body, prefix: Path=DIR) -> None:
+    unit_file = prefix / unit
+
     logger.debug('writing unit file: %s', unit_file)
     # TODO contextmanager?
     # I guess doesn't hurt doing it twice?
-    verify(unit_file=unit_file, body=body)
+    verify(unit=unit_file, body=body)
     # TODO eh?
     (DIR / unit_file).write_text(body)
 
@@ -271,8 +292,11 @@ ExecStart={target} --to {user} --unit %i --journalctl-args "-o cat"
 # User=nobody
 # Group=systemd-journal
 '''
+
+    # TODO this should probably be installed to default dir?...
+
     # TODO copy the file to local??
-    write_unit(unit_file=f'status-email@.service', body=X)
+    write_unit(unit=f'status-email@.service', body=X, prefix=DEFAULT_DIR)
     # I guess makes sense to reload here; fairly atomic step
     reload()
 
@@ -302,11 +326,10 @@ def job(when: Optional[When], command: Command, *, unit_name: Optional[str]=None
     )
 
 
-Unit = str
-Body = str
-State = Iterable[Tuple[Unit, Body]]
+State = Iterable[Tuple[UnitFile, Body]]
 
 
+# TODO shit. updates across the boundairies of base directory are going to be trickier?...
 def managed_units() -> State:
     res = check_output(scu('list-unit-files', '--no-pager', '--no-legend')).decode('utf8')
     units = list(sorted(x.split()[0] for x in res.splitlines()))
@@ -316,13 +339,15 @@ def managed_units() -> State:
         # could filter by description? but bit too restrictive?
 
         res = check_output(scu('cat', u)).decode('utf8')
-        # ugh. systemctl cat adds some annoying header...
         lines = res.splitlines(keepends=True)
-        assert lines[0].startswith('# ')
+        path_str = lines[0]
         res = ''.join(lines[1:])
 
         if is_managed(res):
-            yield u, res
+            assert path_str.startswith('# /'), path_str
+            unit_file = Path(path_str[2:].strip())
+
+            yield unit_file, res
 
 
 def test_managed_units():
@@ -338,8 +363,10 @@ def test_managed_units():
 
 
 def make_state(jobs: Iterable[Job]) -> State:
-    def check(unit_file, body):
-        verify(unit_file=unit_file, body=body)
+    def check(unit_name: Unit, body: Body):
+        verify(unit=unit_name, body=body)
+        # TODO meh. think about it later...
+        unit_file = DIR / unit_name
         return (unit_file, body)
 
     names: Set[Unit] = set()
@@ -369,18 +396,30 @@ def make_state(jobs: Iterable[Job]) -> State:
 
 # TODO bleh. too verbose..
 class Update(NamedTuple):
-    unit_file: Unit
+    unit_file: UnitFile
     old_body: Body
     new_body: Body
 
+    @property
+    def unit(self) -> str:
+        return self.unit_file.name
+
 
 class Delete(NamedTuple):
-    unit_file: Unit
+    unit_file: UnitFile
+
+    @property
+    def unit(self) -> str:
+        return self.unit_file.name
 
 
 class Add(NamedTuple):
-    unit_file: Unit
+    unit_file: UnitFile
     body: Body
+
+    @property
+    def unit(self) -> str:
+        return self.unit_file.name
 
 
 Action = Union[Update, Delete, Add]
@@ -395,6 +434,8 @@ def compute_plan(*, current: State, pending: State) -> Plan:
 
     units = [c for c in currentd if c not in pendingd] + list(pendingd.keys())
     for u in units:
+        unit = u.name # TODO ??
+
         in_cur = u in currentd
         in_pen = u in pendingd
         if in_cur:
@@ -442,45 +483,46 @@ def apply_state(pending: State) -> None:
 
     for a in deletes:
         # TODO stop timer first?
-        check_call(scu('stop'   , a.unit_file))
-        check_call(scu('disable', a.unit_file))
+        check_call(scu('stop'   , a.unit))
+        check_call(scu('disable', a.unit))
     for a in deletes:
-        (DIR / a.unit_file).unlink() # TODO eh. not sure what do we do with user modifications?
+        (DIR / a.unit).unlink() # TODO eh. not sure what do we do with user modifications?
 
     # TODO not sure how to support 'dirty' units detection...
     for a in updates:
-        ufile = a.unit_file
+        unit = a.unit
         diff = list(unified_diff(a.old_body.splitlines(keepends=True), a.new_body.splitlines(keepends=True)))
         if len(diff) == 0:
             continue
-        logger.info('updating %s', ufile)
+        logger.info('updating %s', unit)
         for d in diff:
             sys.stderr.write(d)
-        write_unit(unit_file=ufile, body=a.new_body)
+        write_unit(unit=a.unit, body=a.new_body)
 
-        if ufile.endswith('.timer'):
+        if unit.endswith('.timer'):
             # TODO do we need to enable again??
-            check_call(scu('restart', a.unit_file))
+            check_call(scu('restart', a.unit))
         # TODO some option to treat all updates as deletes then adds might be good...
 
     # TODO more logging?
 
     for a in adds:
-        ufile = a.unit_file
-        logger.info('adding %s', ufile)
+        logger.info('adding %s', a.unit_file)
         # TODO when we add, assert that previous unit wasn't managed? otherwise we overwrite something
-        write_unit(unit_file=ufile, body=a.body)
+        write_unit(unit=a.unit, body=a.body)
 
     reload()
 
     # need to load everything befor starting the timer..
     for a in adds:
-        ufile = a.unit_file
-        if ufile.endswith('.timer'):
-            logger.info('starting %s', ufile)
+        unit_file = a.unit_file
+        unit = unit_file.name
+        if unit.endswith('.timer'):
+            logger.info('starting %s', unit)
             # TODO use enable --now??
-            check_call(scu('start', ufile)) # dunno if it's worth restarting?
-            check_call(scu('enable', ufile))
+            check_call(scu_start(unit)) # dunno if it's worth restarting?
+            # TODO enable should be first??
+            check_call(scu_enable(unit_file))
 
     reload()
 
@@ -720,7 +762,7 @@ class MonParams(NamedTuple):
     with_command: bool
 
 
-def _cmd_monitor(managed, *, params: MonParams):
+def _cmd_monitor(managed: State, *, params: MonParams):
     # TODO reorder timers and services so timers go before?
     sd = lambda s: f'org.freedesktop.systemd1{s}'
 
@@ -743,7 +785,7 @@ def _cmd_monitor(managed, *, params: MonParams):
 
 
     lines = []
-    names = (u for u, _ in managed)
+    names = (u.name for u, _ in managed)
     uname = lambda full: full.split('.')[0] # TODO not very relibable..
     for k, gr in groupby(names, key=uname):
         [service, timer] = gr
