@@ -90,10 +90,7 @@ def reload():
 
 MANAGED_MARKER = '<MANAGED BY DRON>'
 def is_managed(body: str):
-    # TODO not sure what's a good way of detecting that..
-    legacy_marker = 'Systemdtab=true'
-    # TODO remove Systemdtab=true later
-    return MANAGED_MARKER in body or legacy_marker in body
+    return MANAGED_MARKER in body
 
 
 MANAGED_HEADER = f'''
