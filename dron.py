@@ -93,7 +93,8 @@ def is_managed(body: str):
     return MANAGED_MARKER in body
 
 
-MANAGED_HEADER = f'''
+def managed_header() -> str:
+    return f'''
 # {MANAGED_MARKER}
 # If you do any manual changes, they will be overridden on the next dron run
 '''.lstrip()
@@ -126,7 +127,7 @@ def timer(*, unit_name: str, when: When) -> str:
     specs = '\n'.join(f'{k}={v}' for k, v in spec.items())
 
     return f'''
-{MANAGED_HEADER}
+{managed_header()}
 [Unit]
 Description=Timer for {unit_name}
 
@@ -160,7 +161,7 @@ def service(*, unit_name: str, command: Command, **kwargs: str) -> str:
     extras = '\n'.join(f'{k}={v}' for k, v in kwargs.items())
 
     res = f'''
-{MANAGED_HEADER}
+{managed_header()}
 [Unit]
 Description=Service for {unit_name}
 OnFailure=status-email@%n.service
@@ -949,6 +950,8 @@ I elaborate on what led me to implement it and motivation [[https://beepb00p.xyz
 - why not just use [[https://beepb00p.xyz/scheduler.html#systemd][systemd]]?
     '''
 
+    p.add_argument('--marker', required=False, help=f'Use custom marker instead of default ({MANAGED_MARKER}). Mostly useful for developing/testing.')
+
     sp = p.add_subparsers(dest='mode')
     mp = sp.add_parser('monitor', help='Monitor services/timers managed by dron')
     mp.add_argument('--watch', '-w', action='store_true', help='Watch regularly')
@@ -976,6 +979,13 @@ I elaborate on what led me to implement it and motivation [[https://beepb00p.xyz
 def main():
     p = make_parser()
     args = p.parse_args()
+
+
+    marker = args.marker
+    if marker is not None:
+        global MANAGED_MARKER
+        MANAGED_MARKER = marker
+
 
     mode = args.mode
 
