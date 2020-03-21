@@ -1007,7 +1007,7 @@ def main():
                     'watch',
                     '--color',
                     '-n', '1', # TODO make configurable?
-                    *argv,
+                    *map(shlex.quote, argv),
                 ],
             )
         else:
