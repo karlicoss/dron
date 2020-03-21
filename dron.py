@@ -30,11 +30,13 @@ else:
     logger = LazyLogger('dron', level='debug')
 
 
-DEFAULT_DIR = Path("~/.config/systemd/user").expanduser()
-DIR = DEFAULT_DIR
+SYSTEMD_USER_DIR = Path("~/.config/systemd/user").expanduser()
 
+DIR = Path("~/.config/dron/units").expanduser()
 
-# TODO FIXME mkdir in case it doesn't exist?
+# TODO make factory functions insted and remove mkdir from global scope?
+SYSTEMD_USER_DIR.mkdir(parents=True, exist_ok=True)
+DIR.mkdir(parents=True, exist_ok=True)
 
 
 # TODO allow specifying the path somewhere?
@@ -293,10 +295,8 @@ ExecStart={target} --to {user} --unit %i --journalctl-args "-o cat"
 # Group=systemd-journal
 '''
 
-    # TODO this should probably be installed to default dir?...
-
     # TODO copy the file to local??
-    write_unit(unit=f'status-email@.service', body=X, prefix=DEFAULT_DIR)
+    write_unit(unit=f'status-email@.service', body=X, prefix=SYSTEMD_USER_DIR)
     # I guess makes sense to reload here; fairly atomic step
     reload()
 
