@@ -1039,7 +1039,6 @@ def main():
     def tabfile_or_default():
         tabfile = args.tabfile
         if tabfile is None:
-            click.confirm(f'Use default tabfile: {DRONTAB}?', default=True, abort=True)
             tabfile = DRONTAB
         return tabfile
 
