@@ -816,10 +816,28 @@ def _cmd_monitor(managed: State, *, params: MonParams):
 
             passed_delta = timedelta(seconds=(UTCNOW - last_dt).seconds)
 
-            # TODO color?
-        left   = f'{str(left_delta  ):<8} left'
-        ago    = f'{str(passed_delta):<8} ago'
-        schedule = f'next: {next_dt.isoformat()}; schedule: {spec}'
+        # TODO maybe format seconds prettier. dunno
+        def fmt_delta(d: timedelta) -> str:
+            # format to reduce constant countdown...
+            ad = abs(d)
+            minute = timedelta(minutes=1)
+            gt = False
+            if ad > minute:
+                full_mins = ad // minute
+                ad = timedelta(minutes=full_mins)
+                gt = True
+            ads = str(ad)
+            if len(ads) == 7:
+                ads = '0' + ads # meh
+            return f'>{ads}'
+
+
+        # TODO color?
+        left   = f'{str(fmt_delta(left_delta))  :>9} left'
+        ago    = f'{str(fmt_delta(passed_delta)):>9} ago'
+        # TODO split in two cols?
+        # TODO instead of hacking microsecond, use 'NOW' or something?
+        schedule = f'next: {next_dt.replace(microsecond=0).isoformat()}; schedule: {spec}'
 
         if True: # just preserve indentaion..
             properties = unit_properties(service)
@@ -851,6 +869,8 @@ def _cmd_monitor(managed: State, *, params: MonParams):
         lines.append((ok, [k, status, left, '\n'.join(xx)]))
     lines_ = [l for _, l in sorted(lines, key=lambda x: x[0])]
     # naming is consistent with systemctl --list-timers
+    # meh
+    tabulate.PRESERVE_WHITESPACE = True
     print(tabulate.tabulate(lines_, headers=['UNIT', 'STATUS/PASSED', 'LEFT', 'COMMAND/SCHEDULE']))
 
 
