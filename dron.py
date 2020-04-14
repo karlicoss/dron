@@ -651,8 +651,9 @@ def lint(tabfile: Path) -> Iterator[Union[Exception, State]]:
     # TODO just add options to skip python lint? so it always goes through same code paths
 
     try:
-        jobs = load_jobs(tabfile=tabfile)
+        jobs = load_jobs(tabfile=tabfile, ppath=Path(dtab_dir))
     except Exception as e:
+        # TODO could add better logging here? 'i.e. error while loading jobs'
         logger.exception(e)
         yield e
         return
@@ -723,12 +724,12 @@ def drontab_dir() -> str:
     return str(DRONTAB.resolve().absolute().parent)
 
 
-def load_jobs(tabfile: Path) -> Iterator[Job]:
+def load_jobs(tabfile: Path, ppath: Path) -> Iterator[Job]:
     globs: Dict[str, Any] = {}
 
     # TODO also need to modify pythonpath here??? ugh!
 
-    pp = str(tabfile.resolve().absolute().parent)
+    pp = str(ppath)
     sys.path.insert(0, pp)
     try:
         exec(tabfile.read_text(), globs)
