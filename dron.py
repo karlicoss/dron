@@ -830,7 +830,7 @@ def _cmd_monitor(managed: State, *, params: MonParams):
             ads = str(ad)
             if len(ads) == 7:
                 ads = '0' + ads # meh
-            return f'>{ads}'
+            return ('>' if gt else '') + ads
 
 
         # TODO color?
