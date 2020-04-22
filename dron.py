@@ -158,22 +158,36 @@ WantedBy=timers.target
 '''.lstrip()
 
 
+# if it's an str, assume it's already escaped
+# otherwise we are responsible for escaping..
 Command = Union[PathIsh, Sequence[PathIsh]]
 
-def ncmd(command: Command) -> List[str]:
-    if isinstance(command, (str, Path)):
-        return ncmd([command])
+Escaped = str
+def escape(command: Command) -> Escaped:
+    if isinstance(command, Escaped):
+        return command
+    elif isinstance(command, Path):
+        return escape([command])
     else:
-        return [str(c) for c in command]
+        return ' '.join(shlex.quote(str(part)) for part in command)
 
+
+def wrap(script: PathIsh, command: Command) -> Escaped:
+    return shlex.quote(str(script)) + ' ' + escape(command)
+
+
+def test_wrap():
+    assert wrap('/bin/bash', ['-c', 'echo whatever']) == "/bin/bash -c 'echo whatever'"
+    bin = Path('/bin/bash')
+    assert wrap(bin, "-c 'echo whatever'") == "/bin/bash -c 'echo whatever'"
+    assert wrap(bin, ['echo', bin]) == "/bin/bash echo /bin/bash"
+    assert wrap('cat', bin) == "cat /bin/bash"
 
 
 # TODO allow to pass extra args
 def service(*, unit_name: str, command: Command, **kwargs: str) -> str:
-    # TODO FIXME think carefully about escaping command etc?
-    nc = ncmd(command)
-    # TODO not sure how to handle this properly...
-    cmd = ' '.join(nc)
+    cmd = escape(command)
+    # TODO not sure if something else needs to be escaped for ExecStart??
 
     # TODO ugh. how to allow injecting arbitrary stuff, not only in [Service] section?
 
