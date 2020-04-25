@@ -825,6 +825,8 @@ def _cmd_monitor(managed: State, *, params: MonParams):
 
             last_dt = _from_usec(last)
             next_dt = _from_usec(next_)
+            # meh
+            nexts = termcolor.colored('running now', 'yellow') + '        ' if next_dt == datetime.max else next_dt.replace(microsecond=0).isoformat()
 
             # chop off microseconds
             left_delta = timedelta(seconds=(next_dt - UTCNOW).seconds)
@@ -852,7 +854,7 @@ def _cmd_monitor(managed: State, *, params: MonParams):
         ago    = f'{str(fmt_delta(passed_delta)):>9} ago'
         # TODO split in two cols?
         # TODO instead of hacking microsecond, use 'NOW' or something?
-        schedule = f'next: {next_dt.replace(microsecond=0).isoformat()}; schedule: {spec}'
+        schedule = f'next: {nexts}; schedule: {spec}'
 
         if True: # just preserve indentaion..
             properties = unit_properties(service)
