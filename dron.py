@@ -810,6 +810,7 @@ def _cmd_monitor(managed: State, *, params: MonParams):
     for k, gr in groupby(names, key=uname):
         [service, timer] = gr
         ok = True
+        running = False
         if True: # just preserve old indentation..
             cmd = 'n/a'
             status = 'n/a'
@@ -826,7 +827,10 @@ def _cmd_monitor(managed: State, *, params: MonParams):
             last_dt = _from_usec(last)
             next_dt = _from_usec(next_)
             # meh
-            nexts = termcolor.colored('running now', 'yellow') + '        ' if next_dt == datetime.max else next_dt.replace(microsecond=0).isoformat()
+            # TODO don't think this detects ad-hoc runs
+            if next_dt == datetime.max:
+                running = True
+            nexts = termcolor.colored('running now', 'yellow') + '        ' if running else next_dt.replace(microsecond=0).isoformat()
 
             if next_dt == datetime.max:
                 left_delta = timedelta(0)
@@ -900,8 +904,9 @@ def _cmd_monitor(managed: State, *, params: MonParams):
         if params.with_command:
             xx.append(command)
 
-        lines.append((ok, [k, status, left, '\n'.join(xx)]))
-    lines_ = [l for _, l in sorted(lines, key=lambda x: x[0])]
+        lines.append((ok, running, [k, status, left, '\n'.join(xx)]))
+    # todo maybe default ordering could be by running time ... dunno
+    lines_ = [l for _, _, l in sorted(lines, key=lambda x: (x[0], not x[1]))]
     # naming is consistent with systemctl --list-timers
     # meh
     tabulate.PRESERVE_WHITESPACE = True
