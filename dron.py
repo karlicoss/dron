@@ -828,30 +828,47 @@ def _cmd_monitor(managed: State, *, params: MonParams):
             # meh
             nexts = termcolor.colored('running now', 'yellow') + '        ' if next_dt == datetime.max else next_dt.replace(microsecond=0).isoformat()
 
-            # chop off microseconds
-            left_delta = timedelta(seconds=(next_dt - UTCNOW).seconds)
-
-            passed_delta = timedelta(seconds=(UTCNOW - last_dt).seconds)
+            if next_dt == datetime.max:
+                left_delta = timedelta(0)
+            else:
+                left_delta   = next_dt - UTCNOW
 
         # TODO maybe format seconds prettier. dunno
         def fmt_delta(d: timedelta) -> str:
             # format to reduce constant countdown...
             ad = abs(d)
+            # get rid of microseconds
+            ad = ad - timedelta(microseconds=ad.microseconds)
+
+            day    = timedelta(days=1)
+            hour   = timedelta(hours=1)
             minute = timedelta(minutes=1)
             gt = False
-            if ad > minute:
-                full_mins = ad // minute
-                ad = timedelta(minutes=full_mins)
+            if ad > day:
+                full_days  = ad // day
+                hours = (ad % day) // hour
+                ads = f'{full_days}d {hours}h'
                 gt = True
-            ads = str(ad)
+            elif ad > minute:
+                full_mins  = ad // minute
+                ad = timedelta(minutes=full_mins)
+                ads = str(ad)
+                gt = True
+            else:
+                # show exact
+                ads = str(ad)
             if len(ads) == 7:
-                ads = '0' + ads # meh
-            return ('>' if gt else '') + ads
+                ads = '0' + ads # meh. fix missing leading zero in hours..
+            ads = ('>' if gt else '') + ads
+            return ads
 
 
-        # TODO color?
-        left   = f'{str(fmt_delta(left_delta))  :>9} left'
-        ago    = f'{str(fmt_delta(passed_delta)):>9} ago'
+        left   = f'{str(fmt_delta(left_delta)):<9}'
+        if last_dt.timestamp() == 0:
+            ago = 'never' # TODO yellow? 
+        else:
+            passed_delta = UTCNOW - last_dt
+            ago = str(fmt_delta(passed_delta))
         # TODO split in two cols?
         # TODO instead of hacking microsecond, use 'NOW' or something?
         schedule = f'next: {nexts}; schedule: {spec}'
@@ -876,7 +893,7 @@ def _cmd_monitor(managed: State, *, params: MonParams):
                 color = 'red'
                 ok = False
 
-        status = f'{result:<9} {ago}{rates}'
+        status = f'{result:<9} {ago:<8}{rates}'
         status = termcolor.colored(status, color)
 
         xx = [schedule]
@@ -888,7 +905,8 @@ def _cmd_monitor(managed: State, *, params: MonParams):
     # naming is consistent with systemctl --list-timers
     # meh
     tabulate.PRESERVE_WHITESPACE = True
-    print(tabulate.tabulate(lines_, headers=['UNIT', 'STATUS/PASSED', 'LEFT', 'COMMAND/SCHEDULE']))
+    print(tabulate.tabulate(lines_, headers=['UNIT', 'STATUS/AGO', 'LEFT', 'COMMAND/SCHEDULE']))
+    # TODO also 'running now'?
 
 
 # TODO think if it's worth integrating with timers?
