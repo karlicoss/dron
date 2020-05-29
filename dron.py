@@ -874,7 +874,7 @@ def _cmd_monitor(managed: State, *, params: MonParams):
                 color = 'green'
             else:
                 color = 'red'
-                ok = True
+                ok = False
 
         status = f'{result:<9} {ago}{rates}'
         status = termcolor.colored(status, color)
