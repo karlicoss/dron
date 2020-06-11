@@ -349,7 +349,13 @@ State = Iterable[Tuple[UnitFile, Body]]
 
 # TODO shit. updates across the boundairies of base directory are going to be trickier?...
 def managed_units() -> State:
-    res = check_output(scu('list-unit-files', '--no-pager', '--no-legend')).decode('utf8')
+    # TODO ugh. still consumes noticeable cpu, probably need to cache daemon reload time or something??
+    res = check_output(scu(
+        'list-unit-files', 
+        '--no-pager', '--no-legend',
+        '--type=service',
+        '--state=enabled', '--state=disabled', # exclude 'static' etc
+    )).decode('utf8')
     units = list(sorted(x.split()[0] for x in res.splitlines()))
     for u in units:
         # meh. but couldn't find any better way to filter a subset of systemd properties...
