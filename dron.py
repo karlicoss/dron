@@ -46,6 +46,7 @@ DRONTAB = Path("~/.config/drontab").expanduser()
 PathIsh = Union[str, Path]
 
 
+# TODO can remove this? although might be useful for tests
 VERIFY_UNITS = True
 # TODO ugh. verify tries using already installed unit files so if they were bad, everything would fail
 # I guess could do two stages, i.e. units first, then timers
@@ -212,6 +213,9 @@ def verify(*, unit: PathIsh, body: str):
         return
 
     unit_name = Path(unit).name
+
+    # TODO can validate timestamps too? and security? and calendars!
+
 
     # ugh. pipe doesn't work??
     # e.g. 'systemd-analyze --user verify <(cat systemdtab-test.service)' results in:
