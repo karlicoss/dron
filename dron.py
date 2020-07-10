@@ -14,6 +14,7 @@ import shutil
 from subprocess import check_call, CalledProcessError, run, PIPE, check_output, Popen
 from tempfile import NamedTemporaryFile, TemporaryDirectory
 from typing import NamedTuple, Union, Sequence, Optional, Iterator, Tuple, Iterable, List, Any, Dict, Set
+from functools import lru_cache
 
 
 # TODO not sure about click..
@@ -779,13 +780,32 @@ def cmd_apply(tabfile: Path) -> None:
     apply(tabfile)
 
 
-def _from_usec(usec) -> datetime:
-    u = int(usec)
-    if u == 2 ** 64 - 1: # apparently systemd uses max uint64
-        # happens if the job is running ATM?
-        return datetime.max
-    else:
-        return datetime.utcfromtimestamp(u / 10 ** 6)
+
+from datetime import tzinfo
+
+class Monitor:
+    def __init__(self):
+        import pytz
+        self.utc = pytz.utc
+        self.utcmax = self.utc.localize(datetime.max)
+
+    def from_usec(self, usec) -> datetime:
+        u = int(usec)
+        if u == 2 ** 64 - 1: # apparently systemd uses max uint64
+            # happens if the job is running ATM?
+            return self.utcmax
+        else:
+            return self.utc.localize(datetime.utcfromtimestamp(u / 10 ** 6))
+
+    @property # type: ignore[misc]
+    @lru_cache
+    def local_tz(self):
+        # TODO warning if tzlocal isn't installed?
+        try:
+            from tzlocal import get_localzone
+            return get_localzone()
+        except:
+            return self.utc
 
 
 class MonParams(NamedTuple):
@@ -797,7 +817,10 @@ def _cmd_monitor(managed: State, *, params: MonParams):
     # TODO reorder timers and services so timers go before?
     sd = lambda s: f'org.freedesktop.systemd1{s}'
 
-    UTCNOW = datetime.utcnow()
+
+    mon = Monitor()
+
+    UTCNOW = datetime.now(tz=mon.utc)
 
     # TODO not sure what's difference from colorama?
     import termcolor
@@ -835,13 +858,18 @@ def _cmd_monitor(managed: State, *, params: MonParams):
             spec = cal[0][1] # TODO is there a more reliable way to retrieve it??
             # TODO not sure if last is really that useful..
 
-            last_dt = _from_usec(last)
-            next_dt = _from_usec(next_)
+            last_dt = mon.from_usec(last)
+            next_dt = mon.from_usec(next_)
             # meh
             # TODO don't think this detects ad-hoc runs
             if next_dt == datetime.max:
                 running = True
-            nexts = termcolor.colored('running now', 'yellow') + '        ' if running else next_dt.replace(microsecond=0).isoformat()
+            if running:
+                nexts = termcolor.colored('running now', 'yellow') + '        '
+            else:
+                # todo print tz in the header?
+                # tood ugh. mypy can't handle lru_cache wrapper?
+                nexts = next_dt.astimezone(mon.local_tz).replace(tzinfo=None, microsecond=0).isoformat() # type: ignore[arg-type]
 
             if next_dt == datetime.max:
                 left_delta = timedelta(0)
@@ -978,8 +1006,9 @@ def _unit_success_rate(unit: Unit) -> float:
 
 
 def cmd_past(unit: Unit):
+    mon = Monitor()
     for j in _unit_logs(unit):
-        ts = _from_usec(j['__REALTIME_TIMESTAMP'])
+        ts = mon.from_usec(j['__REALTIME_TIMESTAMP'])
         msg = j['MESSAGE']
         print(ts.isoformat(), msg)
 
