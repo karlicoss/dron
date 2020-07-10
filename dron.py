@@ -32,16 +32,16 @@ else:
 
 SYSTEMD_USER_DIR = Path("~/.config/systemd/user").expanduser()
 
-DIR = Path("~/.config/dron/units").expanduser()
+# todo appdirs?
+DRON_DIR = Path('~/.config/dron').expanduser()
+DIR = DRON_DIR / 'units'
 
 # TODO make factory functions insted and remove mkdir from global scope?
 SYSTEMD_USER_DIR.mkdir(parents=True, exist_ok=True)
 DIR.mkdir(parents=True, exist_ok=True)
 
 
-# TODO allow specifying the path somewhere?
-DRONTAB = Path("~/.config/drontab").expanduser()
-
+DRONTAB = DRON_DIR / 'drontab.py'
 
 PathIsh = Union[str, Path]
 
@@ -347,6 +347,7 @@ def job(when: Optional[When], command: Command, *, unit_name: Optional[str]=None
 State = Iterable[Tuple[UnitFile, Body]]
 
 
+# TODO not sure if should be via dbus? we want to manipulate the ones that aren't loaded too?
 # TODO shit. updates across the boundairies of base directory are going to be trickier?...
 def managed_units() -> State:
     # TODO ugh. still consumes noticeable cpu, probably need to cache daemon reload time or something??
