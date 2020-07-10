@@ -355,8 +355,10 @@ def managed_units() -> State:
     res = check_output(scu(
         'list-unit-files', 
         '--no-pager', '--no-legend',
-        '--type=service',
-        '--state=enabled', '--state=disabled', # exclude 'static' etc
+        '--type=service', '--type=timer',
+        # exclude 'static' etc
+        # TODO ugh. not sure I like it
+        '--state=enabled', '--state=disabled', '--state=linked',
     )).decode('utf8')
     units = list(sorted(x.split()[0] for x in res.splitlines()))
     for u in units:
