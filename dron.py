@@ -17,17 +17,14 @@ from typing import NamedTuple, Union, Sequence, Optional, Iterator, Tuple, Itera
 from functools import lru_cache
 
 
-# TODO not sure about click..
 import click # type: ignore
 
- # TODO
 try:
     from kython.klogging2 import LazyLogger # type: ignore
 except ImportError:
     import logging
     logger = logging.getLogger('dron')
 else:
-    # TODO need bit less verbose logging
     logger = LazyLogger('dron', level='debug')
 
 
@@ -61,13 +58,13 @@ else:
     fixture = lambda f: f # no-op otherwise to prevent pytest import
 
 
-def has_systemd():
+def has_systemd() -> bool:
     if 'GITHUB_ACTION' in os.environ:
         return False
     return True
 
 
-def skip_if_no_systemd():
+def skip_if_no_systemd() -> None:
     import pytest # type: ignore
     if not has_systemd():
         pytest.skip('No systemd')
@@ -150,7 +147,7 @@ def timer(*, unit_name: str, when: When) -> str:
     return f'''
 {managed_header()}
 [Unit]
-Description=Timer for {unit_name}
+Description=Timer for {unit_name} {MANAGED_MARKER}
 
 [Timer]
 {specs}
@@ -198,7 +195,7 @@ def service(*, unit_name: str, command: Command, **kwargs: str) -> str:
     res = f'''
 {managed_header()}
 [Unit]
-Description=Service for {unit_name}
+Description=Service for {unit_name} {MANAGED_MARKER}
 OnFailure=status-email@%n.service
 
 [Service]
@@ -282,7 +279,7 @@ StandardOutput=baaad
 def write_unit(*, unit: Unit, body: Body, prefix: Path=DIR) -> None:
     unit_file = prefix / unit
 
-    logger.debug('writing unit file: %s', unit_file)
+    logger.info('writing unit file: %s', unit_file)
     # TODO contextmanager?
     # I guess doesn't hurt doing it twice?
     verify(unit=unit_file, body=body)
