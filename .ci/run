@@ -1,0 +1,3 @@
+#!/bin/bash -eux
+# note: python3 -m mypy might not work when it's in virtualenv.. ugh
+mypy --check-untyped    dron.py systemd-email

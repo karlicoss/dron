@@ -53,7 +53,7 @@ VERIFY_UNITS = True
 # I guess could do two stages, i.e. units first, then timers
 # dunno, a bit less atomic though...
 
-
+fixture: Any
 if 'PYTEST' in os.environ: # set by lint script
     import pytest # type: ignore
     fixture = pytest.fixture
@@ -376,7 +376,7 @@ def managed_units() -> State:
             yield unit_file, res
 
 
-def test_managed_units():
+def test_managed_units() -> None:
     skip_if_no_systemd()
 
     # shouldn't fail at least
@@ -384,6 +384,7 @@ def test_managed_units():
 
     # TODO ugh. doesn't work on circleci, fails with
     # dbus.exceptions.DBusException: org.freedesktop.DBus.Error.BadAddress: Address does not contain a colon
+    # todo maybe don't need it anymore with 20.04 circleci?
     if 'CI' not in os.environ:
         cmd_monitor(MonParams(with_success_rate=True, with_command=True))
 
@@ -633,11 +634,10 @@ Error = str
 
 # eh, implicit convention that only one state will be emitted. oh well
 def lint(tabfile: Path) -> Iterator[Union[Exception, State]]:
-    # TODO how to allow these to be defined in tab file?
-
+    # todo how to allow these to be defined in tab file?
     linters = [
-        ['python3', '-m', 'pylint', '-E', str(tabfile)],
-        ['python3', '-m', 'mypy', '--no-incremental', '--check-untyped', str(tabfile)],
+        # TODO hmm. -m is not friendly with pipx/virtualenv?
+        ['mypy', '--no-incremental', '--check-untyped', str(tabfile)],
     ]
 
     ldir = tabfile.parent
@@ -954,7 +954,7 @@ def _cmd_monitor(managed: State, *, params: MonParams):
 
 
 # TODO think if it's worth integrating with timers?
-def cmd_monitor(params: MonParams):
+def cmd_monitor(params: MonParams) -> None:
     managed = list(managed_units())
     if len(managed) == 0:
         print('No managed units!', file=sys.stderr)
@@ -962,7 +962,7 @@ def cmd_monitor(params: MonParams):
     _cmd_monitor(managed, params=params)
 
 
-def cmd_timers():
+def cmd_timers() -> None:
     os.execvp('watch', ['watch', '-n', '0.5', ' '.join(scu('list-timers', '--all'))])
 
 

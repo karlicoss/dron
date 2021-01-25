@@ -1,5 +1,0 @@
-#!/bin/bash -eux
-
-           python3 -m pylint -E systemd-email dron.py systemd-email
-           python3 -m mypy --check-untyped    dron.py systemd-email
-PYTEST=yes python3 -m pytest -s               dron.py

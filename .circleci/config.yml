@@ -3,23 +3,16 @@ version: 2
 
 jobs:
   build_and_check:
-      # ugh, no ubuntu 1804
     machine:
-      image: ubuntu-1604:201903-01
+      image: ubuntu-2004:202010-01
 
     steps:
       - checkout
-      - run: 
-          name: 'setup python'
-          command: |
-              pyenv global 3.7.0
-              python3 -m pip install --user --upgrade pip
-
+      - run: python3 -m pip install --user --upgrade pip
       - run: ./.ci/install-deps
-      - run: python3 -m pip install --user pytest mypy pylint
-
+      - run: python3 -m pip install --user -r requirements-dev.txt
       - run: python3 -m pip install --user -r requirements.txt
-      - run: ./lint
+      - run: PATH=~/.local/bin:$PATH .ci/run
 
 
 workflows:
