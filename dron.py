@@ -13,7 +13,7 @@ import shlex
 import shutil
 from subprocess import check_call, CalledProcessError, run, PIPE, check_output, Popen
 from tempfile import NamedTemporaryFile, TemporaryDirectory
-from typing import NamedTuple, Union, Sequence, Optional, Iterator, Tuple, Iterable, List, Any, Dict, Set
+from typing import NamedTuple, Union, Sequence, Optional, Iterator, Tuple, Iterable, List, Any, Dict, Set, cast
 from functools import lru_cache
 
 
@@ -25,7 +25,7 @@ except ImportError:
     import logging
     logger = logging.getLogger('dron')
 else:
-    logger = LazyLogger('dron', level='debug')
+    logger = LazyLogger('dron', level='info')
 
 
 SYSTEMD_USER_DIR = Path("~/.config/systemd/user").expanduser()
@@ -345,34 +345,46 @@ def job(when: Optional[When], command: Command, *, unit_name: Optional[str]=None
 State = Iterable[Tuple[UnitFile, Body]]
 
 
-# TODO not sure if should be via dbus? we want to manipulate the ones that aren't loaded too?
+def _sd(s: str) -> str:
+    return f'org.freedesktop.systemd1{s}'
+
+class BusManager:
+    def __init__(self) -> None:
+        from dbus import SessionBus, Interface # type: ignore[import]
+        self.Interface = Interface # meh
+
+        self.bus = SessionBus()  # note: SystemBus is for system-wide services
+        systemd = self.bus.get_object(_sd(''), '/org/freedesktop/systemd1')
+        self.manager = Interface(systemd, dbus_interface=_sd('.Manager'))
+
+    def properties(self, u: Unit):
+        service_unit = self.manager.GetUnit(u)
+        service_proxy = self.bus.get_object(_sd(''), str(service_unit))
+        return self.Interface(service_proxy, dbus_interface='org.freedesktop.DBus.Properties')
+
+    @staticmethod # meh
+    def prop(obj, schema: str, name: str):
+        return obj.Get(_sd(schema), name)
+
+
 # TODO shit. updates across the boundairies of base directory are going to be trickier?...
-def managed_units() -> State:
-    # TODO ugh. still consumes noticeable cpu, probably need to cache daemon reload time or something??
-    res = check_output(scu(
-        'list-unit-files', 
-        '--no-pager', '--no-legend',
-        '--type=service', '--type=timer',
-        # exclude 'static' etc
-        # TODO ugh. not sure I like it
-        '--state=enabled', '--state=disabled', '--state=linked',
-    )).decode('utf8')
-    units = list(sorted(x.split()[0] for x in res.splitlines()))
-    for u in units:
-        # meh. but couldn't find any better way to filter a subset of systemd properties...
-        # e.g. sc show only displays 'known' properties.
-        # could filter by description? but bit too restrictive?
+def managed_units(*, with_body: bool=True) -> State:
+    bus = BusManager()
+    states = bus.manager.ListUnits() # ok nice, it's basically instant
 
-        res = check_output(scu('cat', u)).decode('utf8')
-        lines = res.splitlines(keepends=True)
-        path_str = lines[0]
-        res = ''.join(lines[1:])
+    for state in states:
+        name  = state[0]
+        descr = state[1]
+        if not is_managed(descr):
+            continue
 
-        if is_managed(res):
-            assert path_str.startswith('# /'), path_str
-            unit_file = Path(path_str[2:].strip())
-
-            yield unit_file, res
+        # todo annoying, this call still takes some time... but whatever ok
+        props = bus.properties(name)
+        # stale = int(bus.prop(props, '.Unit', 'NeedDaemonReload')) == 1
+        unit_file = Path(str(bus.prop(props, '.Unit', 'FragmentPath')))
+        body = unit_file.read_text() if with_body else None
+        body = cast(str, body) # FIXME later.. for now None is only used in monitor anyway
+        yield unit_file, body
 
 
 def test_managed_units() -> None:
@@ -813,32 +825,22 @@ class MonParams(NamedTuple):
 
 
 def _cmd_monitor(managed: State, *, params: MonParams):
+    logger.debug('starting monitor...')
     # TODO reorder timers and services so timers go before?
     sd = lambda s: f'org.freedesktop.systemd1{s}'
-
 
     mon = Monitor()
 
     UTCNOW = datetime.now(tz=mon.utc)
 
-    # TODO not sure what's difference from colorama?
+    # todo not sure what's difference from colorama?
     import termcolor
     import tabulate
 
-    from dbus import SessionBus, Interface, DBusException # type: ignore[import]
-    bus = SessionBus()  # TODO SystemBus for system??
-    systemd = bus.get_object(sd(''), '/org/freedesktop/systemd1')
-    manager = Interface(systemd, dbus_interface=sd('.Manager'))
-
-    def unit_properties(u: Unit):
-        service_unit = manager.GetUnit(u)
-        service_proxy = bus.get_object(sd(''), str(service_unit))
-        properties = Interface(service_proxy, dbus_interface='org.freedesktop.DBus.Properties')
-        return properties
-
+    bus = BusManager()
 
     lines = []
-    names = (u.name for u, _ in managed)
+    names = sorted(u.name for u, _ in managed)
     uname = lambda full: full.split('.')[0] # TODO not very relibable..
     for k, gr in groupby(names, key=uname):
         [service, timer] = gr
@@ -848,11 +850,10 @@ def _cmd_monitor(managed: State, *, params: MonParams):
             cmd = 'n/a'
             status = 'n/a'
 
-            properties = unit_properties(timer)
-
-            cal   = properties.Get(sd('.Timer'), 'TimersCalendar')
-            last  = properties.Get(sd('.Timer'), 'LastTriggerUSec')
-            next_ = properties.Get(sd('.Timer'), 'NextElapseUSecRealtime')
+            props = bus.properties(timer)
+            cal   = bus.prop(props, '.Timer', 'TimersCalendar')
+            last  = bus.prop(props, '.Timer', 'LastTriggerUSec')
+            next_ = bus.prop(props, '.Timer', 'NextElapseUSecRealtime')
 
             spec = cal[0][1] # TODO is there a more reliable way to retrieve it??
             # TODO not sure if last is really that useful..
@@ -916,11 +917,11 @@ def _cmd_monitor(managed: State, *, params: MonParams):
         schedule = f'next: {nexts}; schedule: {spec}'
 
         if True: # just preserve indentaion..
-            properties = unit_properties(service)
+            props = bus.properties(service)
             # TODO some summary too? e.g. how often in failed
             # TODO make defensive?
-            exec_start = properties.Get(sd('.Service'), 'ExecStart')
-            result     = properties.Get(sd('.Service'), 'Result')
+            exec_start = bus.prop(props, '.Service', 'ExecStart')
+            result     = bus.prop(props, '.Service', 'Result')
             command =  ' '.join(map(shlex.quote, exec_start[0][1]))
 
             if params.with_success_rate:
@@ -954,7 +955,7 @@ def _cmd_monitor(managed: State, *, params: MonParams):
 
 # TODO think if it's worth integrating with timers?
 def cmd_monitor(params: MonParams) -> None:
-    managed = list(managed_units())
+    managed = list(managed_units(with_body=False)) # body slows down this call quite a bit
     if len(managed) == 0:
         print('No managed units!', file=sys.stderr)
     # TODO test it ?
@@ -1100,9 +1101,10 @@ I elaborate on what led me to implement it and motivation [[https://beepb00p.xyz
 
     sp = p.add_subparsers(dest='mode')
     mp = sp.add_parser('monitor', help='Monitor services/timers managed by dron')
-    mp.add_argument('--watch', '-w', action='store_true', help='Watch regularly')
-    mp.add_argument('--rate'       , action='store_true', help='Display success rate (unstable and potentially slow)')
-    mp.add_argument('--command'    , action='store_true', help='Display command')
+    mp.add_argument('-n'        ,type=int, default=1, help='-n parameter for watch')
+    mp.add_argument('--once'   , action='store_true', help='only call once')
+    mp.add_argument('--rate'   , action='store_true', help='Display success rate (unstable and potentially slow)')
+    mp.add_argument('--command', action='store_true', help='Display command')
     sp.add_parser('timers', help='List all timers') # TODO timers doesn't really belong here?
     pp = sp.add_parser('past', help='List past job runs')
     pp.add_argument('unit', type=str) # TODO add shell completion?
@@ -1143,15 +1145,15 @@ def main():
 
     if mode == 'monitor':
         # TODO hacky...
-        watch = args.watch
-        if watch:
-            argv = [a for a in sys.argv if a not in {'-w', '--watch'}]
+        once = args.once
+        if not once:
+            argv = sys.argv + ['--once']
             os.execvp(
                 'watch',
                 [
                     'watch',
                     '--color',
-                    '-n', '1', # TODO make configurable?
+                    '-n', str(args.n),
                     *map(shlex.quote, argv),
                 ],
             )
