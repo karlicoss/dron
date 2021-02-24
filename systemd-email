@@ -10,7 +10,7 @@ from subprocess import Popen, check_call, check_output, run, PIPE
 
 
 # TODO could just pipe?
-def send(payload: Iterator[bytes]):
+def send(payload: Iterator[bytes]) -> None:
     # TODO can we exec into it?
     # TODO ideally we want to iterate though output?
     pl = b'\n'.join(payload) # TODO FIXME
@@ -50,7 +50,7 @@ Content-Type: text/plain; charset=UTF-8
     yield check_output(LCMD)
 
 
-def main():
+def main() -> None:
     from argparse import ArgumentParser
     p = ArgumentParser()
     p.add_argument('--to', required=True)

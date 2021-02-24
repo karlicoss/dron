@@ -13,6 +13,7 @@ import shlex
 import shutil
 from subprocess import check_call, CalledProcessError, run, PIPE, check_output, Popen
 from tempfile import NamedTemporaryFile, TemporaryDirectory
+import textwrap
 from typing import NamedTuple, Union, Sequence, Optional, Iterator, Tuple, Iterable, List, Any, Dict, Set, cast
 from functools import lru_cache
 
@@ -29,6 +30,8 @@ else:
 
 
 SYSTEMD_USER_DIR = Path("~/.config/systemd/user").expanduser()
+
+SYSTEMD_EMAIL = Path('~/.local/bin/systemd-email').expanduser()
 
 # todo appdirs?
 DRON_DIR = Path('~/.config/dron').expanduser()
@@ -184,29 +187,39 @@ def test_wrap():
 
 
 # TODO allow to pass extra args
-def service(*, unit_name: str, command: Command, **kwargs: str) -> str:
+def service(*, unit_name: str, command: Command, extra_email: Optional[str]=None, **kwargs: str) -> str:
     cmd = escape(command)
     # TODO not sure if something else needs to be escaped for ExecStart??
+    # todo systemd-escape? but only can be used for names
 
     # TODO ugh. how to allow injecting arbitrary stuff, not only in [Service] section?
 
     extras = '\n'.join(f'{k}={v}' for k, v in kwargs.items())
 
-    res = f'''
-{managed_header()}
-[Unit]
-Description=Service for {unit_name} {MANAGED_MARKER}
-OnFailure=status-email@%n.service
+    mextra = '' if extra_email is None else f',{extra_email}'
 
-[Service]
-ExecStart={cmd}
-{extras}
-'''.lstrip()
-    # TODO not sure if should include username??
+    user = getpass.getuser()
+    email_cmd = f'{SYSTEMD_EMAIL} --to {user}{mextra} --unit %n --journalctl-args "-o cat"'
+    # TODO set a very high nice value for emailer? not sure how
+
+    # ok OnFailure is quite annoying since it can't take arguments etc... seems much easier to use ExecStopPost
+    # (+ can possibly run on success too that way?)
+    # https://unix.stackexchange.com/a/441662/180307
+    res = textwrap.dedent(f'''
+    {managed_header()}
+    [Unit]
+    Description=Service for {unit_name} {MANAGED_MARKER}
+
+    [Service]
+    ExecStart={cmd}
+    ExecStopPost=/bin/sh -c 'if [ $$EXIT_STATUS != 0 ]; then {email_cmd}; fi'
+    {extras}
+    '''.lstrip())
+    # TODO need to make sure logs are preserved?
     return res
 
 
-def verify(*, unit: PathIsh, body: str):
+def verify(*, unit: PathIsh, body: str) -> None:
     if not VERIFY_UNITS:
         return
 
@@ -243,7 +256,7 @@ def verify(*, unit: PathIsh, body: str):
         raise RuntimeError(msg)
 
 
-def test_verify(handle_systemd):
+def test_verify(handle_systemd) -> None:
     skip_if_no_systemd()
     def fails(body: str):
         import pytest # type: ignore[import]
@@ -287,31 +300,27 @@ def write_unit(*, unit: Unit, body: Body, prefix: Path=DIR) -> None:
     (DIR / unit_file).write_text(body)
 
 
-def prepare():
-    # TODO automatically email to user? I guess make sense..
-    user = getpass.getuser()
-    # TODO atomic write?
+def prepare() -> None:
     src = Path(__file__).absolute().resolve().parent / 'systemd-email'
-    target = Path('~/.local/bin/systemd-email').expanduser()
-    target.parent.mkdir(parents=True, exist_ok=True)
-    shutil.copy2(src, target)
-    # TODO ln maybe?..
+    SYSTEMD_EMAIL.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(src, SYSTEMD_EMAIL)
 
-    # TODO set a very high nice value? not sure
-    # TODO need to make sure logs are preserved?
-    X = f'''
-[Unit]
-Description=status email for %i to {user}
 
-[Service]
-Type=oneshot
-ExecStart={target} --to {user} --unit %i --journalctl-args "-o cat"
-# TODO why these were suggested??
-# User=nobody
-# Group=systemd-journal
-'''
+# used to use this, keeping for now just in case, but won't really need it later
+def old_systemd_emailer() -> None:
+    user = getpass.getuser()
+    X = textwrap.dedent(f'''
+    [Unit]
+    Description=status email for %i to {user}
 
-    # TODO copy the file to local??
+    [Service]
+    Type=oneshot
+    ExecStart={SYSTEMD_EMAIL} --to {user} --unit %i --journalctl-args "-o cat"
+    # TODO why these were suggested??
+    # User=nobody
+    # Group=systemd-journal
+    ''')
+
     write_unit(unit=f'status-email@.service', body=X, prefix=SYSTEMD_USER_DIR)
     # I guess makes sense to reload here; fairly atomic step
     reload()
@@ -321,12 +330,13 @@ class Job(NamedTuple):
     when: Optional[When]
     command: Command
     unit_name: str
+    extra_email: Optional[str]
     kwargs: Dict[str, str]
 
 # TODO think about arg names?
 # TODO not sure if should give it default often?
 # TODO when first? so it's more compat to crontab..
-def job(when: Optional[When], command: Command, *, unit_name: Optional[str]=None, **kwargs) -> Job:
+def job(when: Optional[When], command: Command, *, unit_name: Optional[str]=None, extra_email: Optional[str]=None, **kwargs) -> Job:
     """
     when: if None, then timer won't be created (still allows running job manually)
 
@@ -338,6 +348,7 @@ def job(when: Optional[When], command: Command, *, unit_name: Optional[str]=None
         when=when,
         command=command,
         unit_name=unit_name,
+        extra_email=extra_email,
         kwargs=kwargs,
     )
 
@@ -415,7 +426,7 @@ def make_state(jobs: Iterable[Job]) -> State:
         assert uname not in names, j
         names.add(uname)
 
-        s = service(unit_name=uname, command=j.command, **j.kwargs)
+        s = service(unit_name=uname, command=j.command, extra_email=j.extra_email, **j.kwargs)
         yield check(uname + '.service', s)
 
         when = j.when
