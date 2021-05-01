@@ -9,10 +9,8 @@ jobs:
     steps:
       - checkout
       - run: python3 -m pip install --user --upgrade pip
-      - run: ./.ci/install-deps
-      - run: python3 -m pip install --user -r requirements-dev.txt
-      - run: python3 -m pip install --user -r requirements.txt
-      - run: PATH=~/.local/bin:$PATH .ci/run
+        # FIXME ugh. doesn't look like systemd works on circle??
+      - run: PATH=~/.local/bin:$PATH .ci/run -e mypy
 
 
 workflows:

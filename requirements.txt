@@ -1,4 +1,0 @@
-dbus-python
-click # for TUI interactions
-tabulate # for pretty printing
-termcolor
