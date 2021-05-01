@@ -73,13 +73,9 @@ I elaborate on what led me to implement it and motivation [[https://beepb00p.xyz
 
 * Setting up
 
-- Install Python dependencies: =pip3 install --user -r requirements.txt=
-
-  At the moment it only depends on =click= for some CLI interactions, which I'm planning to remove/vendorize.
-
-- Install =sendmail= from your package manager if you want to recieve job failure emails
-
-For convenience, I recommend putting a symlink to =dron.py= somewhere in your =PATH= (e.g. =~/.local/bin=).
+1. install system dependencies (see =.ci/run= ) -- these are necessary for =dbus-python= library
+2. install dron: =pip3 install --user git+https://github.com/karlicoss/dron=
+3. install =sendmail= from your package manager if you want to recieve job failure emails
 
 * Using
   

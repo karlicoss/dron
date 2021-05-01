@@ -13,8 +13,8 @@ def main() -> None:
         # https://mypy.readthedocs.io/en/stable/installed_packages.html#making-pep-561-compatible-packages
         zip_safe=False,
 
-        py_modules=[name],
-        # todo not sure about mypy?
+        packages=[name],
+        package_data={name: ['py.typed']},
 
         install_requires=[
             'dbus-python', # dbus interface to systemd
@@ -33,6 +33,7 @@ def main() -> None:
             'linting': ['pytest', 'mypy', 'lxml'], # lxml for mypy coverage report
         },
 
+        entry_points={'console_scripts': ['dron = dron:main', 'systemd_email = dron.systemd_email:main']},
 
         # this needs to be set if you're planning to upload to pypi
         # url='',

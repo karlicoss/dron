@@ -31,7 +31,7 @@ else:
 
 SYSTEMD_USER_DIR = Path("~/.config/systemd/user").expanduser()
 
-SYSTEMD_EMAIL = Path('~/.local/bin/systemd-email').expanduser()
+SYSTEMD_EMAIL = Path('systemd-email')
 
 # todo appdirs?
 DRON_DIR = Path('~/.config/dron').expanduser()
@@ -298,13 +298,6 @@ def write_unit(*, unit: Unit, body: Body, prefix: Path=DIR) -> None:
     verify(unit=unit_file, body=body)
     # TODO eh?
     (DIR / unit_file).write_text(body)
-
-
-def prepare() -> None:
-    src = Path(__file__).absolute().resolve().parent / 'systemd-email'
-    # TODO maybe install it properly?...
-    SYSTEMD_EMAIL.parent.mkdir(parents=True, exist_ok=True)
-    shutil.copy2(src, SYSTEMD_EMAIL)
 
 
 # used to use this, keeping for now just in case, but won't really need it later
@@ -583,7 +576,6 @@ def apply_state(pending: State) -> None:
 
 
 def manage(state: State) -> None:
-    prepare()
     apply_state(pending=state)
 
 
@@ -680,11 +672,8 @@ def lint(tabfile: Path) -> Iterator[Union[Exception, State]]:
         logger.info('Running: %s', ' '.join(map(shlex.quote, l)))
         with TemporaryDirectory() as td:
             env = {**os.environ}
-            env = extra_path('PYTHONPATH', dron_dir, env)
             env = extra_path('PYTHONPATH', dtab_dir, env)
-
-            env = extra_path('MYPYPATH', dron_dir, env)
-            env = extra_path('MYPYPATH', dtab_dir, env)
+            env = extra_path('MYPYPATH'  , dtab_dir, env)
 
             r = run(l, cwd=str(ldir), env=env)
         if r.returncode == 0:
