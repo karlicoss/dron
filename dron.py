@@ -54,7 +54,8 @@ VERIFY_UNITS = True
 # dunno, a bit less atomic though...
 
 fixture: Any
-if 'PYTEST' in os.environ: # set by lint script
+under_pytest = 'pytest' in sys.modules
+if under_pytest:
     import pytest # type: ignore
     fixture = pytest.fixture
 else:
