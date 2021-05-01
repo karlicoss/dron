@@ -1,5 +1,0 @@
-#!/bin/bash -eux
-## TODO move all other CI stuff here
-
-# necessary for dbus-python
-sudo apt install libdbus-1-dev
