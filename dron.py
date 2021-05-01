@@ -178,7 +178,7 @@ def wrap(script: PathIsh, command: Command) -> Escaped:
     return shlex.quote(str(script)) + ' ' + escape(command)
 
 
-def test_wrap():
+def test_wrap() -> None:
     assert wrap('/bin/bash', ['-c', 'echo whatever']) == "/bin/bash -c 'echo whatever'"
     bin = Path('/bin/bash')
     assert wrap(bin, "-c 'echo whatever'") == "/bin/bash -c 'echo whatever'"
@@ -199,8 +199,7 @@ def service(*, unit_name: str, command: Command, extra_email: Optional[str]=None
     mextra = '' if extra_email is None else f',{extra_email}'
 
     user = getpass.getuser()
-    email_cmd = f'{SYSTEMD_EMAIL} --to {user}{mextra} --unit %n --journalctl-args "-o cat"'
-    # TODO set a very high nice value for emailer? not sure how
+    email_cmd = f'{SYSTEMD_EMAIL} --to {user}{mextra} --unit %n'
 
     # ok OnFailure is quite annoying since it can't take arguments etc... seems much easier to use ExecStopPost
     # (+ can possibly run on success too that way?)
@@ -302,6 +301,7 @@ def write_unit(*, unit: Unit, body: Body, prefix: Path=DIR) -> None:
 
 def prepare() -> None:
     src = Path(__file__).absolute().resolve().parent / 'systemd-email'
+    # TODO maybe install it properly?...
     SYSTEMD_EMAIL.parent.mkdir(parents=True, exist_ok=True)
     shutil.copy2(src, SYSTEMD_EMAIL)
 

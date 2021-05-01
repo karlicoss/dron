@@ -11,9 +11,8 @@ from subprocess import Popen, check_call, check_output, run, PIPE
 
 # TODO could just pipe?
 def send(payload: Iterator[bytes]) -> None:
-    # TODO can we exec into it?
-    # TODO ideally we want to iterate though output?
-    pl = b'\n'.join(payload) # TODO FIXME
+    # todo can we exec into it?
+    pl = b'\n'.join(payload)
     r = run(['sendmail', '-t'], input=pl)
     r.check_returncode()
 
@@ -22,7 +21,7 @@ def scu(*args):
     return ['systemctl', '--user', *args]
 
 
-def payload(*, to: str, unit: str, journalctl_args: Optional[str]) -> Iterator[bytes]:
+def payload(*, to: str, unit: str) -> Iterator[bytes]:
     hostname = socket.gethostname()
     # TODO think about subject..
     yield f'''
@@ -33,21 +32,12 @@ Content-Transfer-Encoding: 8bit
 Content-Type: text/plain; charset=UTF-8
 '''.lstrip().encode('utf8')
 
-    # TODO shorter status?
-    r = run(scu('status', '--lines', '0', unit), stdout=PIPE, stderr=PIPE)
+    cmd = scu('status', '--lines', '1000000', unit, '-o', 'cat')
+    r = run(cmd, stdout=PIPE, stderr=PIPE)
     # status returns non-zero code if the unit failed, so need to ignore failures..
-    # TODO check return code?
-    yield r.stdout # TODO not sure which one should keep?
-
-    # TODO make defensive and send everything in email?
-    TS = check_output(scu('show', '-p', 'ActiveEnterTimestamp', '--value', unit)).decode('utf8').strip()
-
-    # TODO shlex?? ugh
-    jargs = [] if journalctl_args is None else journalctl_args.split()
-    LCMD = ['journalctl', '--user', '-u', unit, '--since', TS, *jargs]
-    yield ' '.join(shlex.quote(x) for x in LCMD).encode('utf8') # meh
-    yield b''
-    yield check_output(LCMD)
+    # todo check return code?
+    yield ' '.join(map(shlex.quote, cmd)).encode('utf8') # meh
+    yield r.stdout
 
 
 def main() -> None:
@@ -55,10 +45,9 @@ def main() -> None:
     p = ArgumentParser()
     p.add_argument('--to', required=True)
     p.add_argument('--unit', required=True)
-    p.add_argument('--journalctl-args', default=None)
     args = p.parse_args()
 
-    pl = payload(to=args.to, unit=args.unit, journalctl_args=args.journalctl_args)
+    pl = payload(to=args.to, unit=args.unit)
     send(payload=pl)
 
 
