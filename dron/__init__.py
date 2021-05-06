@@ -386,7 +386,7 @@ def managed_units(*, with_body: bool=True) -> State:
         # todo annoying, this call still takes some time... but whatever ok
         props = bus.properties(name)
         # stale = int(bus.prop(props, '.Unit', 'NeedDaemonReload')) == 1
-        unit_file = Path(str(bus.prop(props, '.Unit', 'FragmentPath')))
+        unit_file = Path(str(bus.prop(props, '.Unit', 'FragmentPath'))).resolve()
         body = unit_file.read_text() if with_body else None
         body = cast(str, body) # FIXME later.. for now None is only used in monitor anyway
         yield unit_file, body
