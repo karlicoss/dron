@@ -22,6 +22,8 @@ def main() -> None:
             'tabulate'   , # for monitor
             'termcolor'  , # for monitor
 
+            'mypy'       , # for checking units
+
             # vvv example of git repo dependency
             # 'repo @ git+https://github.com/karlicoss/repo.git',
 
