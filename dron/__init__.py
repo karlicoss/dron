@@ -31,7 +31,7 @@ else:
 
 SYSTEMD_USER_DIR = Path("~/.config/systemd/user").expanduser()
 
-SYSTEMD_EMAIL = Path('systemd-email')
+SYSTEMD_EMAIL = Path('~/.local/bin/systemd_email').expanduser()
 
 # todo appdirs?
 DRON_DIR = Path('~/.config/dron').expanduser()
