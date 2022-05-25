@@ -205,16 +205,16 @@ def service(*, unit_name: str, command: Command, extra_email: Optional[str]=None
     # ok OnFailure is quite annoying since it can't take arguments etc... seems much easier to use ExecStopPost
     # (+ can possibly run on success too that way?)
     # https://unix.stackexchange.com/a/441662/180307
-    res = textwrap.dedent(f'''
-    {managed_header()}
-    [Unit]
-    Description=Service for {unit_name} {MANAGED_MARKER}
+    res = f'''
+{managed_header()}
+[Unit]
+Description=Service for {unit_name} {MANAGED_MARKER}
 
-    [Service]
-    ExecStart={cmd}
-    ExecStopPost=/bin/sh -c 'if [ $$EXIT_STATUS != 0 ]; then {email_cmd}; fi'
-    {extras}
-    '''.lstrip())
+[Service]
+ExecStart={cmd}
+ExecStopPost=/bin/sh -c 'if [ $$EXIT_STATUS != 0 ]; then {email_cmd}; fi'
+{extras}
+'''.lstrip()
     # TODO need to make sure logs are preserved?
     return res
 
