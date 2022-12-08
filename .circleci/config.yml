@@ -4,12 +4,20 @@ version: 2
 jobs:
   build_and_check:
     machine:
-      image: ubuntu-2004:202010-01
+      image: ubuntu-2204:2022.10.2
+
+    working_directory: ~/project
 
     steps:
-      - checkout
+      # eh, default checkout tries to do it over ssh, and requires setting up some keys??
+      # - checkout
+      - run: git clone https://github.com/karlicoss/dron ~/project
+      - run: sudo apt-get update
       - run: python3 -m pip install --user --upgrade pip
         # FIXME ugh. doesn't look like systemd works on circle??
+        # FFS. no matter what I put to apt-get install in .ci/run, circleci hangs on
+        # "Which services should be restarted?" prompt???
+        # weirdly it works fine in the interactive SSH session. wtf
       - run: PATH=~/.local/bin:$PATH .ci/run -e mypy
 
 
