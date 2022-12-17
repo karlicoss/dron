@@ -24,18 +24,24 @@ def main() -> NoReturn:
     unit = sys.argv[1]
     cmd = sys.argv[2:]
     # hmm, a bit crap transforming everything to stdout? but not much we can do?
-    captured_stdout = []
-    with Popen(cmd, stdout=PIPE, stderr=STDOUT) as po:
-        out = po.stdout
-        assert out is not None
-        for line in out:
-            captured_stdout.append(line)
-            sys.stdout.buffer.write(line)
-    rc = po.poll()
+    captured_log = []
+    try:
+        with Popen(cmd, stdout=PIPE, stderr=STDOUT) as po:
+            out = po.stdout
+            assert out is not None
+            for line in out:
+                captured_log.append(line)
+                sys.stdout.buffer.write(line)
+        rc = po.poll()
 
-    if rc == 0:
-        # short circuit
-        sys.exit(0)
+        if rc == 0:
+            # short circuit
+            sys.exit(0)
+    except Exception as e:
+        # Popen istelf still fail due to permission denied or something
+        logging.exception(e)
+        captured_log.append(str(e).encode('utf8'))
+        rc = 123
 
     to = getpass.getuser()
     def payload() -> Iterator[bytes]:
@@ -53,7 +59,7 @@ Content-Type: text/plain; charset=UTF-8
         yield (' '.join(map(shlex.quote, cmd)) + '\n').encode('utf8')
         yield b'\n'
         yield b'output (stdout + stderr):\n\n'
-        yield from captured_stdout
+        yield from captured_log
     try:
         send(payload())
     except Exception as e:
