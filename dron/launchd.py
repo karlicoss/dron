@@ -257,14 +257,15 @@ def cmd_past(unit: Unit) -> None:
 def _cmd_monitor(managed: State, *, params: MonParams) -> None:
     # for now kinda copy pasted from systemd
     logger.debug('starting monitor...')
-    lines_: list[Sequence[str]] = []
+
+    from .common import MonitorEntry, print_monitor
+
+    entries: list[MonitorEntry] = []
     for s in managed:
         assert isinstance(s, LaunchdUnitState), s
 
         unit_file = s.unit_file
         name = unit_file.name.removesuffix('.plist')
-        ok = True  # TODO?
-        running = False  # TODO?
 
         is_seconds = re.fullmatch(r'(\d+) seconds', s.schedule)
         if is_seconds is not None:
@@ -275,19 +276,24 @@ def _cmd_monitor(managed: State, *, params: MonParams) -> None:
             ss = s.schedule
 
         schedule = f'every {ss}'
-        mcommand = []
+        command = None
         if params.with_command:
             cmd = s.cmdline[3:]  # chop off wrapper script for local mail
-            cmdline = ' '.join(map(shlex.quote, cmd))
-            mcommand = [cmdline]
+            command = ' '.join(map(shlex.quote, cmd))
 
-        status = f'EXIT CODE {s.last_exit_code}'
+        status_ok = s.last_exit_code == '0'
+        status = 'success' if status_ok else f'exitcode {s.last_exit_code}'
 
-        lines_.append((name, status, 'N/A', schedule, *mcommand))
+        pid = s.pid
 
-    import tabulate
-    tabulate.PRESERVE_WHITESPACE = True
-    headers = ['UNIT', 'STATUS/AGO', 'LEFT', 'SCHEDULE']
-    if params.with_command:
-        headers += ['COMMAND']
-    print(tabulate.tabulate(lines_, headers=headers))
+        entries.append(MonitorEntry(
+            unit=name,
+            status=status,
+            left='n/a',
+            next='n/a',
+            schedule=schedule,
+            command=command,
+            pid=pid,
+            status_ok=status_ok,
+        ))
+    print_monitor(entries)

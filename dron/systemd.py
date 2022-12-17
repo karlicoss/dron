@@ -298,19 +298,14 @@ def _cmd_monitor(managed: State, *, params: MonParams):
 
     UTCNOW = datetime.now(tz=mon.utc)
 
-    # todo not sure what's difference from colorama?
-    import termcolor
-    import tabulate
-
     bus = BusManager()
 
-    lines = []
+    from .common import MonitorEntry, print_monitor
+    entries: list[MonitorEntry] = []
     names = sorted(s.unit_file.name for s in managed)
-    uname = lambda full: full.split('.')[0] # TODO not very relibable..
+    uname = lambda full: full.split('.')[0]
     for k, gr in groupby(names, key=uname):
         [service, timer] = gr
-        ok = True
-        running = False
         cmd = 'n/a'
         status = 'n/a'
 
@@ -319,21 +314,12 @@ def _cmd_monitor(managed: State, *, params: MonParams):
         last  = bus.prop(props, '.Timer', 'LastTriggerUSec')
         next_ = bus.prop(props, '.Timer', 'NextElapseUSecRealtime')
 
-        spec = cal[0][1] # TODO is there a more reliable way to retrieve it??
-        # TODO not sure if last is really that useful..
+        spec = cal[0][1]  # TODO is there a more reliable way to retrieve it??
+        # todo not sure if last is really that useful..
 
         last_dt = mon.from_usec(last)
         next_dt = mon.from_usec(next_)
-        # meh
-        # TODO don't think this detects ad-hoc runs
-        if next_dt == datetime.max:
-            running = True
-        if running:
-            nexts = termcolor.colored('running now', 'yellow') + '        '
-        else:
-            # todo print tz in the header?
-            # tood ugh. mypy can't handle lru_cache wrapper?
-            nexts = next_dt.astimezone(mon.local_tz).replace(tzinfo=None, microsecond=0).isoformat() # type: ignore[arg-type]
+        nexts = next_dt.astimezone(mon.local_tz).replace(tzinfo=None, microsecond=0).isoformat() # type: ignore[arg-type]
 
         if next_dt == datetime.max:
             left_delta = timedelta(0)
@@ -376,16 +362,16 @@ def _cmd_monitor(managed: State, *, params: MonParams):
         else:
             passed_delta = UTCNOW - last_dt
             ago = str(fmt_delta(passed_delta))
-        # TODO split in two cols?
         # TODO instead of hacking microsecond, use 'NOW' or something?
-        schedule = f'next: {nexts}; schedule: {spec}'
 
         props = bus.properties(service)
         # TODO some summary too? e.g. how often in failed
         # TODO make defensive?
         exec_start = bus.prop(props, '.Service', 'ExecStart')
         result     = bus.prop(props, '.Service', 'Result')
-        command =  ' '.join(map(shlex.quote, exec_start[0][1]))
+        command =  ' '.join(map(shlex.quote, exec_start[0][1])) if params.with_command else None
+        _pid: Optional[int] = int(bus.prop(props, '.Service', 'MainPID'))
+        pid  = None if _pid == 0 else str(_pid)
 
         if params.with_success_rate:
             rate = _unit_success_rate(service)
@@ -393,28 +379,20 @@ def _cmd_monitor(managed: State, *, params: MonParams):
         else:
             rates = ''
 
-        if result == 'success':
-            color = 'green'
-        else:
-            color = 'red'
-            ok = False
-
+        status_ok = result == 'success'
         status = f'{result:<9} {ago:<8}{rates}'
-        status = termcolor.colored(status, color)
 
-        xx = [schedule]
-        if params.with_command:
-            xx.append(command)
-
-        lines.append((ok, running, [k, status, left, '\n'.join(xx)]))
-    # todo maybe default ordering could be by running time ... dunno
-    lines_ = [l for _, _, l in sorted(lines, key=lambda x: (x[0], not x[1]))]
-    # naming is consistent with systemctl --list-timers
-    # meh
-    tabulate.PRESERVE_WHITESPACE = True
-    print(tabulate.tabulate(lines_, headers=['UNIT', 'STATUS/AGO', 'LEFT', 'COMMAND/SCHEDULE']))
-    # TODO also 'running now'?
-
+        entries.append(MonitorEntry(
+            unit=k,
+            status=status,
+            left=left,
+            next=nexts,
+            schedule=spec,
+            command=command,
+            pid=pid,
+            status_ok=status_ok,
+        ))
+    print_monitor(entries)
 
 
 Json = dict[str, Any]
