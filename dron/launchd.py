@@ -3,6 +3,7 @@ import json
 from pathlib import Path
 import re
 import shlex
+import sys
 from subprocess import check_output, Popen, PIPE, check_call
 from tempfile import TemporaryDirectory
 import textwrap
@@ -108,11 +109,23 @@ def plist(*, unit_name: str, command: Command, when: Optional[When]=None) -> str
         assert seconds is not None, when
         mschedule = '\n'.join(('<key>StartInterval</key>', f'<integer>{seconds}</integer>'))
 
+    # set argv[0] properly
+    # hmm I was hoping it would make desktop notifications ('background service added' nicer)
+    # but even after that it still only shows executable script name. ugh
+    # program_argv = (unit_name, *cmd[1:])
+    # hm maybe need to do the same for systemd helper? instead of 'installing' in setup.py
+    # just need to make sure to pass sys.executable because pip copies files as non-executablepip copies files as non-executable
+    LAUNCHD_WRAPPER = Path(__file__).parent / 'launchd_wrapper.py'
+    program_argv = (
+        sys.executable,
+        LAUNCHD_WRAPPER,
+        unit_name,
+        *cmd,
+    )
+    del cmd
+    program_argvs = '\n'.join(f'<string>{c}</string>' for c in program_argv)
 
-    command_args = '\n'.join(f'<string>{c}</string>' for c in cmd)
-
-    # FIXME shit. going to need a wrapper script to email on failure??
-    # FIXME add log file
+    # TODO add log file, although mailer is already capturing stdout
     # TODO hmm maybe use the same log file for all dron jobs? would make it easier to rotate?
     res = f'''
 <?xml version="1.0" encoding="UTF-8"?>
@@ -124,7 +137,7 @@ def plist(*, unit_name: str, command: Command, when: Optional[When]=None) -> str
     <string>{DRON_PREFIX}{unit_name}</string>
     <key>ProgramArguments</key>
     <array>
-{textwrap.indent(command_args, " " * 8)}
+{textwrap.indent(program_argvs, " " * 8)}
     </array>
 
     <key>RunAtLoad</key>
@@ -264,7 +277,8 @@ def _cmd_monitor(managed: State, *, params: MonParams) -> None:
         schedule = f'every {ss}'
         mcommand = []
         if params.with_command:
-            cmdline = ' '.join(map(shlex.quote, s.cmdline))
+            cmd = s.cmdline[3:]  # chop off wrapper script for local mail
+            cmdline = ' '.join(map(shlex.quote, cmd))
             mcommand = [cmdline]
 
         status = f'EXIT CODE {s.last_exit_code}'
