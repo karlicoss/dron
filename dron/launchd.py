@@ -1,3 +1,4 @@
+from datetime import timedelta
 import json
 from pathlib import Path
 import re
@@ -70,13 +71,18 @@ def launchctl_reload(*, unit: Unit, unit_file: UnitFile) -> None:
 
 
 def plist(*, unit_name: str, command: Command, when: Optional[When]=None) -> str:
-    # TODO might need different escaping mechanism
-    # cmd = escape(command)
-
-    # TODO remove tabs
-    # TODO add org.dron??
-    # FIXME args should go separately! so don't escape??
-    assert isinstance(command, Sequence), command
+    # TODO hmm, kinda mirrors 'escape' method, not sure
+    cmd: Sequence[str]
+    if isinstance(command, Sequence):
+        cmd = tuple(map(str, command))
+    elif isinstance(command, Path):
+        cmd = [str(command)]
+    else:
+        # unquoting and splitting is way trickier than quoting and joining...
+        # not sure how to implement it p
+        # maybe we just want bash -c in this case, dunno how to implement properly
+        assert False, command
+    del command
 
     mschedule = ''
     if when is not None:
@@ -86,13 +92,24 @@ def plist(*, unit_name: str, command: Command, when: Optional[When]=None) -> str
             'minutely': 60,
             'hourly'  : 60 * 60,
             'daily'   : 60 * 60 * 24,
-            # ugh. nasty hack just for the unit test
-            '*:0/10'  : 60 * 10,
-        }[when]
+        }.get(when)
+        if seconds is None:
+            # ok, try systemd-like spec..
+            specs = [
+                (re.escape('*:0/')   + r'(\d+)', 60),
+                (re.escape('*:*:0/') + r'(\d+)', 1 ),
+            ]
+            for rgx, mult in specs:
+                m = re.fullmatch(rgx, when)
+                if m is not None:
+                    num = m.group(1)
+                    seconds = int(num) * mult
+                    break
+        assert seconds is not None, when
         mschedule = '\n'.join(('<key>StartInterval</key>', f'<integer>{seconds}</integer>'))
 
 
-    command_args = '\n'.join(f'<string>{c}</string>' for c in command)
+    command_args = '\n'.join(f'<string>{c}</string>' for c in cmd)
 
     # FIXME shit. going to need a wrapper script to email on failure??
     # FIXME add log file
@@ -133,11 +150,10 @@ def launchd_state(with_body: bool) -> Iterator[LaunchdUnitState]:
     fields = [
         'path',
         'last exit code',
-        'program',
         'pid',
         'run interval',
     ]
-    # TODO arguments??
+    arguments = None
     for line in dump.splitlines():
         if name is None:
             name = line.removesuffix(' = {')
@@ -151,13 +167,21 @@ def launchd_state(with_body: bool) -> Iterator[LaunchdUnitState]:
                 yield LaunchdUnitState(
                     unit_file=Path(path),
                     body=body,
-                    cmdline=(extras.get('program'), 'TODO ARGS'),
-                    last_exit_code=extras.get('last exit code'),
+                    cmdline=tuple(extras['arguments']),
+                    last_exit_code=extras['last exit code'],
+                    # pid might not be present (presumably when it's not running)
                     pid=extras.get('pid'),
                     schedule=extras.get('run interval'),
                 )
             name = None
             extras = {}
+        elif arguments is not None:
+            if line == '\t}':
+                extras['arguments'] = arguments
+                arguments = None
+            else:
+                arg = line.removeprefix('\t\t')
+                arguments.append(arg)
         else:
             xx = line.removeprefix('\t')
             for f in fields:
@@ -165,6 +189,9 @@ def launchd_state(with_body: bool) -> Iterator[LaunchdUnitState]:
                 if xx.startswith(zz):
                     extras[f] = xx.removeprefix(zz)
                     break
+            # special handling..
+            if xx.startswith('arguments = '):
+                arguments = []
 
 
 def verify_unit(*, unit: PathIsh, body: str) -> None:
@@ -226,17 +253,27 @@ def _cmd_monitor(managed: State, *, params: MonParams) -> None:
         ok = True  # TODO?
         running = False  # TODO?
 
-        schedule = f'every {s.schedule}'
-        # TODO convert to hours/minutes?
-        xx = [schedule]
+        is_seconds = re.fullmatch(r'(\d+) seconds', s.schedule)
+        if is_seconds is not None:
+            delta = timedelta(seconds=int(is_seconds.group(1)))
+            # meh, but works for now
+            ss = str(delta)
+        else:
+            ss = s.schedule
+
+        schedule = f'every {ss}'
+        mcommand = []
         if params.with_command:
             cmdline = ' '.join(map(shlex.quote, s.cmdline))
-            xx.append(cmdline)
+            mcommand = [cmdline]
 
         status = f'EXIT CODE {s.last_exit_code}'
 
-        lines_.append((name, status, 'N/A', '\n'.join(xx)))
+        lines_.append((name, status, 'N/A', schedule, *mcommand))
 
     import tabulate
     tabulate.PRESERVE_WHITESPACE = True
-    print(tabulate.tabulate(lines_, headers=['UNIT', 'STATUS/AGO', 'LEFT', 'COMMAND/SCHEDULE']))
+    headers = ['UNIT', 'STATUS/AGO', 'LEFT', 'SCHEDULE']
+    if params.with_command:
+        headers += ['COMMAND']
+    print(tabulate.tabulate(lines_, headers=headers))
