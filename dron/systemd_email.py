@@ -9,7 +9,6 @@ import shlex
 from subprocess import Popen, check_call, check_output, run, PIPE
 
 
-# TODO could just pipe?
 def send(payload: Iterator[bytes]) -> None:
     # todo can we exec into it?
     pl = b'\n'.join(payload)
@@ -23,7 +22,7 @@ def scu(*args):
 
 def payload(*, to: str, unit: str) -> Iterator[bytes]:
     hostname = socket.gethostname()
-    # TODO think about subject..
+    # todo From: systemd to From: dron?
     yield f'''
 To: {to}
 From: systemd <root@{hostname}>
