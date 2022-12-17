@@ -39,7 +39,7 @@ class LaunchdUnitState(UnitState):
     cmdline: Sequence[str]
     # NOTE: can legit be str (e.g. if unit was never ran before)
     last_exit_code: str
-    pid: str # optional?
+    pid: Optional[str]
     schedule: str # optional?
 
 
@@ -116,3 +116,51 @@ def test_wrap() -> None:
     assert wrap(bin, "-c 'echo whatever'") == "/bin/bash -c 'echo whatever'"
     assert wrap(bin, ['echo', bin]) == "/bin/bash echo /bin/bash"
     assert wrap('cat', bin) == "cat /bin/bash"
+
+
+
+class MonitorEntry(NamedTuple):
+    unit: str
+    status: str
+    left: str
+    next: str
+    schedule: str
+    command: Optional[str]
+    pid: Optional[str]
+    status_ok: bool
+
+
+def print_monitor(entries: Iterable[MonitorEntry]) -> None:
+    entries = list(sorted(
+        entries,
+        key=lambda e: (e.pid is None, e.status_ok, e),
+    ))
+
+    import termcolor
+
+    import tabulate
+    tabulate.PRESERVE_WHITESPACE = True
+
+    headers = [
+        'UNIT',
+        'STATUS',
+        'LEFT',
+        'NEXT',
+        'SCHEDULE',
+    ]
+    with_command = any(x.command is not None for x in entries)
+    if with_command:
+        headers.append('COMMAND')
+
+    items = []
+    for e in entries:
+        e = e._replace(
+            status=termcolor.colored(e.status, 'green' if e.status_ok else 'red'),
+        )
+        if e.pid is not None:
+            e = e._replace(
+                next=termcolor.colored('running now', 'yellow'),
+                left='--',
+            )
+        items.append(e[:len(headers)])
+    print(tabulate.tabulate(items, headers=headers))

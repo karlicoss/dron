@@ -622,6 +622,8 @@ def main() -> None:
         once = args.once
         if not once:
             argv = sys.argv + ['--once']
+            # hmm for some reason on OSX termcolor doesn't work under watch??
+            os.environ['FORCE_COLOR'] = 'true'
             os.execvp(
                 'watch',
                 [
