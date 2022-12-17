@@ -74,10 +74,12 @@ def launchctl_reload(*, unit: Unit, unit_file: UnitFile) -> None:
 def plist(*, unit_name: str, command: Command, when: Optional[When]=None) -> str:
     # TODO hmm, kinda mirrors 'escape' method, not sure
     cmd: Sequence[str]
-    if isinstance(command, Sequence):
+    if isinstance(command, (list, tuple)):
         cmd = tuple(map(str, command))
     elif isinstance(command, Path):
         cmd = [str(command)]
+    elif isinstance(command, str) and ' ' not in command:
+        cmd = [command]
     else:
         # unquoting and splitting is way trickier than quoting and joining...
         # not sure how to implement it p
@@ -106,7 +108,7 @@ def plist(*, unit_name: str, command: Command, when: Optional[When]=None) -> str
                     num = m.group(1)
                     seconds = int(num) * mult
                     break
-        assert seconds is not None, when
+        assert seconds is not None, (unit_name, when)
         mschedule = '\n'.join(('<key>StartInterval</key>', f'<integer>{seconds}</integer>'))
 
     # set argv[0] properly
