@@ -1,200 +1,47 @@
 #!/usr/bin/env python3
 import argparse
 from collections import OrderedDict
-from datetime import datetime, timedelta
 from difflib import unified_diff
-from itertools import tee, groupby
-import json
-import getpass
+from itertools import tee
 import os
 import sys
 from pathlib import Path
 import shlex
 import shutil
-from subprocess import check_call, CalledProcessError, run, PIPE, check_output, Popen
-from tempfile import NamedTemporaryFile, TemporaryDirectory
-import textwrap
-from typing import NamedTuple, Union, Sequence, Optional, Iterator, Tuple, Iterable, List, Any, Dict, Set, cast
-from functools import lru_cache
+from subprocess import check_call, run
+from tempfile import TemporaryDirectory
+from typing import NamedTuple, Union, Optional, Iterator, Iterable, Any, Set
+
 
 import click
 
 
-from .common import IS_SYSTEMD, logger, unwrap
+from .api import *
+
+
+from .common import (
+    IS_SYSTEMD,
+    logger,
+    unwrap,
+    MANAGED_MARKER,
+    PathIsh,
+    Unit, Body, UnitFile,
+    VERIFY_UNITS,
+)
 from . import launchd
 from . import systemd
 from .systemd import _systemctl
 from .launchd import _launchctl
 
 
-SYSTEMD_EMAIL = Path('~/.local/bin/systemd_email').expanduser()
-
 # todo appdirs?
 DRON_DIR = Path('~/.config/dron').expanduser()
-DIR = DRON_DIR / 'units'
-DIR.mkdir(parents=True, exist_ok=True)
+DRON_UNITS_DIR = DRON_DIR / 'units'
+DRON_UNITS_DIR.mkdir(parents=True, exist_ok=True)
 
 
 DRONTAB = DRON_DIR / 'drontab.py'
 
-from .common import PathIsh
-
-
-# TODO can remove this? although might be useful for tests
-VERIFY_UNITS = True
-# TODO ugh. verify tries using already installed unit files so if they were bad, everything would fail
-# I guess could do two stages, i.e. units first, then timers
-# dunno, a bit less atomic though...
-
-fixture: Any
-under_pytest = 'pytest' in sys.modules
-if under_pytest:
-    import pytest # type: ignore
-    fixture = pytest.fixture
-else:
-    fixture = lambda f: f # no-op otherwise to prevent pytest import
-
-
-def is_missing_systemd() -> Optional[str]:
-    if 'GITHUB_ACTION' in os.environ:
-        return "github actions don't have systemd"
-    if not IS_SYSTEMD:
-        return "running on macos"
-    return None
-
-
-
-def skip_if_no_systemd() -> None:
-    import pytest # type: ignore
-    reason = is_missing_systemd()
-    if reason is not None:
-        pytest.skip(f'No systemd: {reason}')
-
-
-# TODO eh, come up with a better name
-@fixture
-def handle_systemd():
-    '''
-    If we can't use systemd, we need to suppress systemd-specific linting
-    '''
-    global VERIFY_UNITS
-    reason = is_missing_systemd()
-    if reason is not None:
-        VERIFY_UNITS = False
-    try:
-        yield
-    finally:
-        VERIFY_UNITS = True
-
-
-from .common import Unit, Body, UnitFile
-
-
-
-MANAGED_MARKER = '<MANAGED BY DRON>'
-def is_managed(body: str):
-    return MANAGED_MARKER in body
-
-
-def managed_header() -> str:
-    return f'''
-# {MANAGED_MARKER}
-# If you do any manual changes, they will be overridden on the next dron run
-'''.lstrip()
-
-
-def test_managed(handle_systemd):
-    skip_if_no_systemd()
-    assert is_managed(timer(unit_name='whatever', when='daily'))
-
-    custom = '''
-[Service]
-ExecStart=/bin/echo 123
-'''
-    verify(unit='other.service', body=custom) # precondition
-    assert not is_managed(custom)
-
-
-from .common import OnCalendar, TimerSpec, When
-
-# TODO how to come up with good implicit job name?
-# TODO do we need a special target for dron?
-def timer(*, unit_name: str, when: When) -> str:
-    spec: TimerSpec
-    if isinstance(when, str):
-        spec = {'OnCalendar': when}
-    else:
-        spec = when
-
-    specs = '\n'.join(f'{k}={v}' for k, v in spec.items())
-
-    return f'''
-{managed_header()}
-[Unit]
-Description=Timer for {unit_name} {MANAGED_MARKER}
-
-[Timer]
-{specs}
-
-[Install]
-WantedBy=timers.target
-'''.lstrip()
-
-
-from .common import Command
-
-Escaped = str
-def escape(command: Command) -> Escaped:
-    if isinstance(command, Escaped):
-        return command
-    elif isinstance(command, Path):
-        return escape([command])
-    else:
-        return ' '.join(shlex.quote(str(part)) for part in command)
-
-
-def wrap(script: PathIsh, command: Command) -> Escaped:
-    return shlex.quote(str(script)) + ' ' + escape(command)
-
-
-def test_wrap() -> None:
-    assert wrap('/bin/bash', ['-c', 'echo whatever']) == "/bin/bash -c 'echo whatever'"
-    bin = Path('/bin/bash')
-    assert wrap(bin, "-c 'echo whatever'") == "/bin/bash -c 'echo whatever'"
-    assert wrap(bin, ['echo', bin]) == "/bin/bash echo /bin/bash"
-    assert wrap('cat', bin) == "cat /bin/bash"
-
-
-# TODO allow to pass extra args
-def service(*, unit_name: str, command: Command, extra_email: Optional[str]=None, **kwargs: str) -> str:
-    cmd = escape(command)
-    # TODO not sure if something else needs to be escaped for ExecStart??
-    # todo systemd-escape? but only can be used for names
-
-    # TODO ugh. how to allow injecting arbitrary stuff, not only in [Service] section?
-
-    extras = '\n'.join(f'{k}={v}' for k, v in kwargs.items())
-
-    mextra = '' if extra_email is None else f',{extra_email}'
-
-    user = getpass.getuser()
-    email_cmd = f'{SYSTEMD_EMAIL} --to {user}{mextra} --unit %n'
-
-    # ok OnFailure is quite annoying since it can't take arguments etc... seems much easier to use ExecStopPost
-    # (+ can possibly run on success too that way?)
-    # https://unix.stackexchange.com/a/441662/180307
-    res = f'''
-{managed_header()}
-[Unit]
-Description=Service for {unit_name} {MANAGED_MARKER}
-
-[Service]
-ExecStart={cmd}
-ExecStopPost=/bin/sh -c 'if [ $$EXIT_STATUS != 0 ]; then {email_cmd}; fi'
-{extras}
-'''.lstrip()
-    # TODO need to make sure logs are preserved?
-    return res
 
 
 # todo maybe lru_cache? during 'apply' they are verified twice
@@ -204,80 +51,18 @@ def verify(*, unit: PathIsh, body: str) -> None:
 
     if not IS_SYSTEMD:
         launchd.verify_unit(unit=unit, body=body)
-        return
-
-    unit_name = Path(unit).name
-    # TODO can validate timestamps too? and security? and calendars!
-    # ugh. pipe doesn't work??
-    # e.g. 'systemd-analyze --user verify <(cat systemdtab-test.service)' results in:
-    # Failed to prepare filename /proc/self/fd/11: Invalid argument
-    with TemporaryDirectory() as tdir:
-        sfile = Path(tdir) / unit_name
-        sfile.write_text(body)
-        res = run(['systemd-analyze', '--user', 'verify', str(sfile)], stdout=PIPE, stderr=PIPE)
-        # ugh. apparently even exit code 1 doesn't guarantee correct output??
-        out = res.stdout
-        err = res.stderr
-        assert out == b'', out # not sure if that's possible..
-
-        if err == b'':
-            return
-
-        # TODO UGH.
-        # is not executable: No such file or directory
-
-        msg = f'failed checking {unit_name}, exit code {res.returncode}'
-        logger.error(msg)
-        print(body, file=sys.stderr)
-        print('systemd-analyze output:', file=sys.stderr)
-        for line in err.decode('utf8').splitlines():
-            print(line, file=sys.stderr)
-            # TODO right, might need to install service first...
-        raise RuntimeError(msg)
+    else:
+        systemd.verify_unit(unit=unit, body=body)
 
 
-def test_verify(handle_systemd) -> None:
-    skip_if_no_systemd()
-    def fails(body: str):
-        import pytest # type: ignore[import]
-        with pytest.raises(Exception):
-            verify(unit='whatever.service', body=body)
-
-    def ok(body):
-        verify(unit='ok.service', body=body)
-
-    ok(body='''
-[Service]
-ExecStart=/bin/echo 123
-''')
-
-    ok(body=service(unit_name='alala', command='/bin/echo 123'))
-
-    # garbage
-    fails(body='fewfewf')
-
-    # no execstart
-    fails(body='''
-[Service]
-StandardOutput=journal
-''')
-
-    fails(body='''
-[Service]
-ExecStart=yes
-StandardOutput=baaad
-''')
-
-
-def write_unit(*, unit: Unit, body: Body, prefix: Path=DIR) -> None:
+def write_unit(*, unit: Unit, body: Body, prefix: Path=DRON_UNITS_DIR) -> None:
     unit_file = prefix / unit
 
     logger.info('writing unit file: %s', unit_file)
     # TODO contextmanager?
     # I guess doesn't hurt doing it twice?
     verify(unit=unit_file, body=body)
-    # TODO eh?
-    (DIR / unit_file).write_text(body)
+    unit_file.write_text(body)
 
 
 def _daemon_reload() -> None:
@@ -287,100 +72,22 @@ def _daemon_reload() -> None:
         # no-op under launchd
         pass
 
-class Job(NamedTuple):
-    when: Optional[When]
-    command: Command
-    unit_name: str
-    extra_email: Optional[str]
-    kwargs: Dict[str, str]
-
-# TODO think about arg names?
-# TODO not sure if should give it default often?
-# TODO when first? so it's more compat to crontab..
-def job(when: Optional[When], command: Command, *, unit_name: Optional[str]=None, extra_email: Optional[str]=None, **kwargs) -> Job:
-    # TODO move this to api.py file?
-    """
-    when: if None, then timer won't be created (still allows running job manually)
-
-    """
-    assert unit_name is not None
-    # TODO later, autogenerate unit name
-    # I guess warn user about non-unique names and prompt to give a more specific name?
-    return Job(
-        when=when,
-        command=command,
-        unit_name=unit_name,
-        extra_email=extra_email,
-        kwargs=kwargs,
-    )
 
 from .common import UnitState, State
 
 
-def _sd(s: str) -> str:
-    return f'org.freedesktop.systemd1{s}'
-
-class BusManager:
-    def __init__(self) -> None:
-        from dbus import SessionBus, Interface # type: ignore[import]
-        self.Interface = Interface # meh
-
-        self.bus = SessionBus()  # note: SystemBus is for system-wide services
-        systemd = self.bus.get_object(_sd(''), '/org/freedesktop/systemd1')
-        self.manager = Interface(systemd, dbus_interface=_sd('.Manager'))
-
-    def properties(self, u: Unit):
-        service_unit = self.manager.GetUnit(u)
-        service_proxy = self.bus.get_object(_sd(''), str(service_unit))
-        return self.Interface(service_proxy, dbus_interface='org.freedesktop.DBus.Properties')
-
-    @staticmethod # meh
-    def prop(obj, schema: str, name: str):
-        return obj.Get(_sd(schema), name)
-
-
-# TODO shit. updates across the boundairies of base directory are going to be trickier?...
-def managed_units(*, with_body: bool=True) -> State:
-    if not IS_SYSTEMD:
+def managed_units(*, with_body: bool) -> State:
+    if IS_SYSTEMD:
+        yield from systemd.systemd_state(with_body=with_body)
+    else:
         yield from launchd.launchd_state(with_body=with_body)
-        return
-
-    bus = BusManager()
-    states = bus.manager.ListUnits() # ok nice, it's basically instant
-
-    for state in states:
-        name  = state[0]
-        descr = state[1]
-        if not is_managed(descr):
-            continue
-
-        # todo annoying, this call still takes some time... but whatever ok
-        props = bus.properties(name)
-        # stale = int(bus.prop(props, '.Unit', 'NeedDaemonReload')) == 1
-        unit_file = Path(str(bus.prop(props, '.Unit', 'FragmentPath'))).resolve()
-        body = unit_file.read_text() if with_body else None
-        yield UnitState(unit_file=unit_file, body=body)
-
-
-def test_managed_units() -> None:
-    # TODO wonder if i'd be able to use launchd on ci...
-    skip_if_no_systemd()
-
-    # shouldn't fail at least
-    list(managed_units())
-
-    # TODO ugh. doesn't work on circleci, fails with
-    # dbus.exceptions.DBusException: org.freedesktop.DBus.Error.BadAddress: Address does not contain a colon
-    # todo maybe don't need it anymore with 20.04 circleci?
-    if 'CI' not in os.environ:
-        cmd_monitor(MonParams(with_success_rate=True, with_command=True))
 
 
 def make_state(jobs: Iterable[Job]) -> State:
     def check(unit_name: Unit, body: Body) -> UnitState:
         verify(unit=unit_name, body=body)
         # TODO meh. think about it later...
-        unit_file = DIR / unit_name
+        unit_file = DRON_UNITS_DIR / unit_name
         return UnitState(unit_file=unit_file, body=body)
 
     names: Set[Unit] = set()
@@ -392,18 +99,17 @@ def make_state(jobs: Iterable[Job]) -> State:
         names.add(uname)
 
         if IS_SYSTEMD:
-            s = service(unit_name=uname, command=j.command, extra_email=j.extra_email, **j.kwargs)
+            s = systemd.service(unit_name=uname, command=j.command, extra_email=j.extra_email, **j.kwargs)
             yield check(uname + '.service', s)
 
             when = j.when
             if when is None:
                 continue
-            t = timer(unit_name=uname, when=when)
+            t = systemd.timer(unit_name=uname, when=when)
             yield check(uname + '.timer', t)
         else:
             p = launchd.plist(unit_name=uname, command=j.command, when=j.when)
             yield check(uname + '.plist', p)
-
 
 
 # TODO bleh. too verbose..
@@ -465,12 +171,12 @@ def compute_plan(*, current: State, pending: State) -> Plan:
 
 # TODO it's not apply, more like 'compute' and also plan is more like a diff between states?
 def apply_state(pending: State) -> None:
-    current = list(managed_units())
+    current = list(managed_units(with_body=True))
     plan = list(compute_plan(current=current, pending=pending))
 
-    deletes: List[Delete] = []
-    updates: List[Update] = []
-    adds: List[Add] = []
+    deletes: list[Delete] = []
+    updates: list[Update] = []
+    adds   : list[Add]    = []
 
     for a in plan:
         if isinstance(a, Delete):
@@ -501,7 +207,7 @@ def apply_state(pending: State) -> None:
         else:
             launchd.launchctl_unload(unit=Path(a.unit).stem)
     for a in deletes:
-        (DIR / a.unit).unlink() # TODO eh. not sure what do we do with user modifications?
+        (DRON_UNITS_DIR / a.unit).unlink() # TODO eh. not sure what do we do with user modifications?
 
     # TODO not sure how to support 'dirty' units detection...
     for a in updates:
@@ -638,7 +344,7 @@ def lint(tabfile: Path) -> Iterator[Union[Exception, State]]:
     dtab_dir = drontab_dir()
 
     # meh.
-    def extra_path(variable: str, path: str, env) -> Dict[str, str]:
+    def extra_path(variable: str, path: str, env) -> dict[str, str]:
         vv = env.get(variable)
         pp = path + ('' if vv is None else ':' + vv)
         return {**env, variable: pp}
@@ -723,7 +429,6 @@ def jobs():
     ok(body=example)
 
 
-
 def do_lint(tabfile: Path) -> State:
     eit, vit = tee(lint(tabfile))
     errors = [r for r in eit if     isinstance(r, Exception)]
@@ -739,7 +444,7 @@ def drontab_dir() -> str:
 
 
 def load_jobs(tabfile: Path, ppath: Path) -> Iterator[Job]:
-    globs: Dict[str, Any] = {}
+    globs: dict[str, Any] = {}
 
     # TODO also need to modify pythonpath here??? ugh!
 
@@ -748,8 +453,7 @@ def load_jobs(tabfile: Path, ppath: Path) -> Iterator[Job]:
     try:
         exec(tabfile.read_text(), globs)
     finally:
-        sys.path.remove(pp) # extremely meh..
-
+        sys.path.remove(pp)  # extremely meh..
 
     jobs = globs['jobs']
     return jobs()
@@ -761,171 +465,14 @@ def apply(tabfile: Path) -> None:
 
 
 def cmd_lint(tabfile: Path) -> None:
-    do_lint(tabfile) # just ignore state
+    do_lint(tabfile)  # just ignore state
 
 
 def cmd_apply(tabfile: Path) -> None:
     apply(tabfile)
 
 
-
-from datetime import tzinfo
-
-# TODO what's this for???
-# TODO could show last exit status?
-class Monitor:
-    def __init__(self):
-        import pytz
-        self.utc = pytz.utc
-        self.utcmax = self.utc.localize(datetime.max)
-
-    def from_usec(self, usec) -> datetime:
-        u = int(usec)
-        if u == 2 ** 64 - 1: # apparently systemd uses max uint64
-            # happens if the job is running ATM?
-            return self.utcmax
-        else:
-            return self.utc.localize(datetime.utcfromtimestamp(u / 10 ** 6))
-
-    @property # type: ignore[misc]
-    @lru_cache
-    def local_tz(self):
-        # TODO warning if tzlocal isn't installed?
-        try:
-            from tzlocal import get_localzone
-            return get_localzone()
-        except:
-            return self.utc
-
-
 from .common import MonParams
-def _cmd_monitor(managed: State, *, params: MonParams):
-    logger.debug('starting monitor...')
-    # TODO reorder timers and services so timers go before?
-    sd = lambda s: f'org.freedesktop.systemd1{s}'
-
-    mon = Monitor()
-
-    UTCNOW = datetime.now(tz=mon.utc)
-
-    # todo not sure what's difference from colorama?
-    import termcolor
-    import tabulate
-
-    bus = BusManager()
-
-    lines = []
-    names = sorted(s.unit_file.name for s in managed)
-    uname = lambda full: full.split('.')[0] # TODO not very relibable..
-    for k, gr in groupby(names, key=uname):
-        [service, timer] = gr
-        ok = True
-        running = False
-        if True: # just preserve old indentation..
-            cmd = 'n/a'
-            status = 'n/a'
-
-            props = bus.properties(timer)
-            cal   = bus.prop(props, '.Timer', 'TimersCalendar')
-            last  = bus.prop(props, '.Timer', 'LastTriggerUSec')
-            next_ = bus.prop(props, '.Timer', 'NextElapseUSecRealtime')
-
-            spec = cal[0][1] # TODO is there a more reliable way to retrieve it??
-            # TODO not sure if last is really that useful..
-
-            last_dt = mon.from_usec(last)
-            next_dt = mon.from_usec(next_)
-            # meh
-            # TODO don't think this detects ad-hoc runs
-            if next_dt == datetime.max:
-                running = True
-            if running:
-                nexts = termcolor.colored('running now', 'yellow') + '        '
-            else:
-                # todo print tz in the header?
-                # tood ugh. mypy can't handle lru_cache wrapper?
-                nexts = next_dt.astimezone(mon.local_tz).replace(tzinfo=None, microsecond=0).isoformat() # type: ignore[arg-type]
-
-            if next_dt == datetime.max:
-                left_delta = timedelta(0)
-            else:
-                left_delta   = next_dt - UTCNOW
-
-        # TODO maybe format seconds prettier. dunno
-        def fmt_delta(d: timedelta) -> str:
-            # format to reduce constant countdown...
-            ad = abs(d)
-            # get rid of microseconds
-            ad = ad - timedelta(microseconds=ad.microseconds)
-
-            day    = timedelta(days=1)
-            hour   = timedelta(hours=1)
-            minute = timedelta(minutes=1)
-            gt = False
-            if ad > day:
-                full_days  = ad // day
-                hours = (ad % day) // hour
-                ads = f'{full_days}d {hours}h'
-                gt = True
-            elif ad > minute:
-                full_mins  = ad // minute
-                ad = timedelta(minutes=full_mins)
-                ads = str(ad)
-                gt = True
-            else:
-                # show exact
-                ads = str(ad)
-            if len(ads) == 7:
-                ads = '0' + ads # meh. fix missing leading zero in hours..
-            ads = ('>' if gt else '') + ads
-            return ads
-
-
-        left   = f'{str(fmt_delta(left_delta)):<9}'
-        if last_dt.timestamp() == 0:
-            ago = 'never' # TODO yellow? 
-        else:
-            passed_delta = UTCNOW - last_dt
-            ago = str(fmt_delta(passed_delta))
-        # TODO split in two cols?
-        # TODO instead of hacking microsecond, use 'NOW' or something?
-        schedule = f'next: {nexts}; schedule: {spec}'
-
-        if True: # just preserve indentaion..
-            props = bus.properties(service)
-            # TODO some summary too? e.g. how often in failed
-            # TODO make defensive?
-            exec_start = bus.prop(props, '.Service', 'ExecStart')
-            result     = bus.prop(props, '.Service', 'Result')
-            command =  ' '.join(map(shlex.quote, exec_start[0][1]))
-
-            if params.with_success_rate:
-                rate = _unit_success_rate(service)
-                rates = f' {rate:.2f}'
-            else:
-                rates = ''
-
-            if result == 'success':
-                color = 'green'
-            else:
-                color = 'red'
-                ok = False
-
-        status = f'{result:<9} {ago:<8}{rates}'
-        status = termcolor.colored(status, color)
-
-        xx = [schedule]
-        if params.with_command:
-            xx.append(command)
-
-        lines.append((ok, running, [k, status, left, '\n'.join(xx)]))
-    # todo maybe default ordering could be by running time ... dunno
-    lines_ = [l for _, _, l in sorted(lines, key=lambda x: (x[0], not x[1]))]
-    # naming is consistent with systemctl --list-timers
-    # meh
-    tabulate.PRESERVE_WHITESPACE = True
-    print(tabulate.tabulate(lines_, headers=['UNIT', 'STATUS/AGO', 'LEFT', 'COMMAND/SCHEDULE']))
-    # TODO also 'running now'?
 
 
 # TODO think if it's worth integrating with timers?
@@ -935,67 +482,16 @@ def cmd_monitor(params: MonParams) -> None:
         print('No managed units!', file=sys.stderr)
     # TODO test it ?
     if IS_SYSTEMD:
-        return _cmd_monitor(managed, params=params)
+        return systemd._cmd_monitor(managed, params=params)
     else:
-        from . import launchd
         return launchd._cmd_monitor(managed, params=params)
-
-
-Json = Dict[str, Any]
-def _unit_logs(unit: Unit) -> Iterator[Json]:
-    # TODO so do I need to parse logs to get failure stats? perhaps json would be more reliable
-    cmd = f'journalctl --user -u {unit} -o json -t systemd --output-fields UNIT_RESULT,JOB_TYPE,MESSAGE'
-    with Popen(cmd.split(), stdout=PIPE) as po:
-        stdout = po.stdout; assert stdout is not None
-        for line in stdout:
-            j = json.loads(line.decode('utf8'))
-            # apparently, successful runs aren't getting logged? not sure why
-            jt = j.get('JOB_TYPE')
-            ur = j.get('UNIT_RESULT')
-            # not sure about this..
-            yield j
-
-
-def _unit_success_rate(unit: Unit) -> float:
-    started = 0
-    failed  = 0
-    # TODO not sure how much time it takes to query all journals?
-    for j in _unit_logs(unit):
-        jt = j.get('JOB_TYPE')
-        ur = j.get('UNIT_RESULT')
-        if jt is not None:
-            assert ur is None
-            started += 1
-        elif ur is not None:
-            assert jt is None
-            failed += 1
-        else:
-            # TODO eh? sometimes jobs also report Succeeded status
-            # e.g. syncthing-paranoid
-            pass
-    if started == 0:
-        assert failed == 0, unit
-        return 1.0
-    success = started - failed
-    return success / started
 
 
 def cmd_past(unit: Unit) -> None:
     if IS_SYSTEMD:
-        mon = Monitor()
-        for j in _unit_logs(unit):
-            ts = mon.from_usec(j['__REALTIME_TIMESTAMP'])
-            msg = j['MESSAGE']
-            print(ts.isoformat(), msg)
+        return systemd.cmd_past(unit)
     else:
-        from . import launchd
         return launchd.cmd_past(unit)
-
-
-class VerifyOff(argparse.Action):
-    def __call__(self, parser, namespace, values, option_string=None):
-        global VERIFY_UNITS
-        VERIFY_UNITS = False
 
 
 # TODO test it and also on Circle?
@@ -1033,7 +529,8 @@ def jobs():
 '''.lstrip()
 
 
-def make_parser():
+def make_parser() -> argparse.ArgumentParser:
+    from .common import VerifyOff
     def add_verify(p):
         # ugh. might be broken on bionic :(
         # specify in readme???
@@ -1042,14 +539,14 @@ def make_parser():
         # https://unix.stackexchange.com/questions/493187/systemd-under-ubuntu-18-04-1-fails-with-failed-to-create-user-slice-serv
         p.add_argument('--no-verify', action=VerifyOff, nargs=0, help='Skip systemctl verify step')
 
-    p = argparse.ArgumentParser('''
+    p = argparse.ArgumentParser(prog='dron', description='''
 dron -- simple frontend for Systemd, inspired by cron.
 
 - *d* stands for 'Systemd'
 - *ron* stands for 'cron'
 
 dron is my attempt to overcome things that make working with Systemd tedious
-'''.strip(),
+'''.lstrip(),
         formatter_class=lambda prog: argparse.RawTextHelpFormatter(prog, width=100),  # type: ignore
     )
     # TODO ugh. when you type e.g. 'dron apply', help format is wrong..
@@ -1076,7 +573,7 @@ I elaborate on what led me to implement it and motivation [[https://beepb00p.xyz
 - why not just use [[https://beepb00p.xyz/scheduler.html#systemd][systemd]]?
     '''
 
-    p.add_argument('--marker', required=False, help=f'Use custom marker instead of default ({MANAGED_MARKER}). Mostly useful for developing/testing.')
+    p.add_argument('--marker', required=False, help=f'Use custom marker instead of default `{MANAGED_MARKER}`. Possibly useful for developing/testing.')
 
     sp = p.add_subparsers(dest='mode')
     mp = sp.add_parser('monitor', help='Monitor services/timers managed by dron')
@@ -1084,7 +581,6 @@ I elaborate on what led me to implement it and motivation [[https://beepb00p.xyz
     mp.add_argument('--once'   , action='store_true', help='only call once')
     mp.add_argument('--rate'   , action='store_true', help='Display success rate (unstable and potentially slow)')
     mp.add_argument('--command', action='store_true', help='Display command')
-    sp.add_parser('timers', help='List all timers') # TODO timers doesn't really belong here?
     pp = sp.add_parser('past', help='List past job runs')
     pp.add_argument('unit', type=str) # TODO add shell completion?
     ep = sp.add_parser('edit', help="Edit  drontab (like 'crontab -e')")
@@ -1103,7 +599,7 @@ I elaborate on what led me to implement it and motivation [[https://beepb00p.xyz
     return p
 
 
-def main():
+def main() -> None:
     p = make_parser()
     args = p.parse_args()
 
@@ -1113,10 +609,9 @@ def main():
         global MANAGED_MARKER
         MANAGED_MARKER = marker
 
-
     mode = args.mode
 
-    def tabfile_or_default():
+    def tabfile_or_default() -> Path:
         tabfile = args.tabfile
         if tabfile is None:
             tabfile = DRONTAB

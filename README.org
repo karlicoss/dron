@@ -1,5 +1,5 @@
 #+begin_src python :results drawer :exports results 
-import dron; return dron.make_parser().prog
+import dron; return dron.make_parser().description
 #+end_src
 
 #+RESULTS:
@@ -24,7 +24,7 @@ import dron; return dron.make_parser().epilog
 In short, you type ~dron edit~ and edit your config file, similarly to ~crontab -e~:
 
 : from dron import job
-: 
+:
 : # at the moment you're expected to define jobs() function that yields jobs
 : # in the future I might add more mechanisms
 : def jobs():
@@ -34,18 +34,18 @@ In short, you type ~dron edit~ and edit your config file, similarly to ~crontab 
 :         '/home/user/scripts/run-borg /home/user',
 :         unit_name='borg-backup-home',
 :     )
-: 
+:
 :     yield job(
 :         'daily',
 :         'linkchecker https://beepb00p.xyz',
 :         unit_name='linkchecker-beepb00p',
 :     )
-: 
+:
 :     # drontab is simply python code!
 :     # so if you're annoyed by having to rememver Systemd syntax, you can use a helper function
 :     def every(*, mins: int) -> str:
 :         return f'*:0/{mins}'
-: 
+:
 :     # make sure my website is alive, it will send local email on failure
 :     yield job(
 :         every(mins=10),
@@ -67,7 +67,7 @@ I elaborate on what led me to implement it and motivation [[https://beepb00p.xyz
 
 - why not just use [[https://beepb00p.xyz/scheduler.html#cron][cron]]?
 - why not just use [[https://beepb00p.xyz/scheduler.html#systemd][systemd]]?
-    
+
 :end:
 
 
@@ -89,19 +89,27 @@ return p.format_help()
 
 #+RESULTS:
 #+begin_example
-usage: [-h] {managed,timers,past,edit,apply,lint} ...
+usage: [-h] [--marker MARKER] {monitor,past,edit,apply,lint,uninstall} ...
+
+dron -- simple frontend for Systemd, inspired by cron.
+
+- *d* stands for 'Systemd'
+- *ron* stands for 'cron'
+
+dron is my attempt to overcome things that make working with Systemd tedious
 
 positional arguments:
-  {managed,timers,past,edit,apply,lint}
-    managed             List units managed by dron
-    timers              List all timers
+  {monitor,past,edit,apply,lint,uninstall}
+    monitor             Monitor services/timers managed by dron
     past                List past job runs
     edit                Edit  drontab (like 'crontab -e')
     apply               Apply drontab (like 'crontab' with no args)
     lint                Check drontab (no 'crontab' alternative, sadly!)
+    uninstall           Uninstall all managed jobs
 
-optional arguments:
+options:
   -h, --help            show this help message and exit
+  --marker MARKER       Use custom marker instead of default `(MANAGED BY DRON)`. Possibly useful for developing/testing.
 #+end_example
 
 
