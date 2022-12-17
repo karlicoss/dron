@@ -17,34 +17,27 @@ import textwrap
 from typing import NamedTuple, Union, Sequence, Optional, Iterator, Tuple, Iterable, List, Any, Dict, Set, cast
 from functools import lru_cache
 
-
-import click # type: ignore
-
-try:
-    from kython.klogging2 import LazyLogger # type: ignore
-except ImportError:
-    import logging
-    logger = logging.getLogger('dron')
-else:
-    logger = LazyLogger('dron', level='info')
+import click
 
 
-SYSTEMD_USER_DIR = Path("~/.config/systemd/user").expanduser()
+from .common import IS_SYSTEMD, logger, unwrap
+from . import launchd
+from . import systemd
+from .systemd import _systemctl
+from .launchd import _launchctl
+
 
 SYSTEMD_EMAIL = Path('~/.local/bin/systemd_email').expanduser()
 
 # todo appdirs?
 DRON_DIR = Path('~/.config/dron').expanduser()
 DIR = DRON_DIR / 'units'
-
-# TODO make factory functions insted and remove mkdir from global scope?
-SYSTEMD_USER_DIR.mkdir(parents=True, exist_ok=True)
 DIR.mkdir(parents=True, exist_ok=True)
 
 
 DRONTAB = DRON_DIR / 'drontab.py'
 
-PathIsh = Union[str, Path]
+from .common import PathIsh
 
 
 # TODO can remove this? although might be useful for tests
@@ -62,16 +55,20 @@ else:
     fixture = lambda f: f # no-op otherwise to prevent pytest import
 
 
-def has_systemd() -> bool:
+def is_missing_systemd() -> Optional[str]:
     if 'GITHUB_ACTION' in os.environ:
-        return False
-    return True
+        return "github actions don't have systemd"
+    if not IS_SYSTEMD:
+        return "running on macos"
+    return None
+
 
 
 def skip_if_no_systemd() -> None:
     import pytest # type: ignore
-    if not has_systemd():
-        pytest.skip('No systemd')
+    reason = is_missing_systemd()
+    if reason is not None:
+        pytest.skip(f'No systemd: {reason}')
 
 
 # TODO eh, come up with a better name
@@ -81,7 +78,8 @@ def handle_systemd():
     If we can't use systemd, we need to suppress systemd-specific linting
     '''
     global VERIFY_UNITS
-    if not has_systemd():
+    reason = is_missing_systemd()
+    if reason is not None:
         VERIFY_UNITS = False
     try:
         yield
@@ -89,25 +87,8 @@ def handle_systemd():
         VERIFY_UNITS = True
 
 
-Unit = str
-Body = str
-UnitFile = Path
+from .common import Unit, Body, UnitFile
 
-
-def scu(*args):
-    return ['systemctl', '--user', *args]
-
-
-def scu_enable(unit_file: UnitFile, *args):
-    return scu('enable', unit_file, *args)
-
-
-def scu_start(unit: Unit, *args):
-    return scu('start', unit, *args)
-
-
-def reload():
-    check_call(scu('daemon-reload'))
 
 
 MANAGED_MARKER = '<MANAGED BY DRON>'
@@ -134,9 +115,8 @@ ExecStart=/bin/echo 123
     assert not is_managed(custom)
 
 
-OnCalendar = str
-TimerSpec = Dict[str, str] # meh
-When = Union[OnCalendar, TimerSpec]
+from .common import OnCalendar, TimerSpec, When
+
 # TODO how to come up with good implicit job name?
 # TODO do we need a special target for dron?
 def timer(*, unit_name: str, when: When) -> str:
@@ -161,9 +141,7 @@ WantedBy=timers.target
 '''.lstrip()
 
 
-# if it's an str, assume it's already escaped
-# otherwise we are responsible for escaping..
-Command = Union[PathIsh, Sequence[PathIsh]]
+from .common import Command
 
 Escaped = str
 def escape(command: Command) -> Escaped:
@@ -219,15 +197,17 @@ ExecStopPost=/bin/sh -c 'if [ $$EXIT_STATUS != 0 ]; then {email_cmd}; fi'
     return res
 
 
+# todo maybe lru_cache? during 'apply' they are verified twice
 def verify(*, unit: PathIsh, body: str) -> None:
     if not VERIFY_UNITS:
         return
 
+    if not IS_SYSTEMD:
+        launchd.verify_unit(unit=unit, body=body)
+        return
+
     unit_name = Path(unit).name
-
     # TODO can validate timestamps too? and security? and calendars!
-
-
     # ugh. pipe doesn't work??
     # e.g. 'systemd-analyze --user verify <(cat systemdtab-test.service)' results in:
     # Failed to prepare filename /proc/self/fd/11: Invalid argument
@@ -300,25 +280,12 @@ def write_unit(*, unit: Unit, body: Body, prefix: Path=DIR) -> None:
     (DIR / unit_file).write_text(body)
 
 
-# used to use this, keeping for now just in case, but won't really need it later
-def old_systemd_emailer() -> None:
-    user = getpass.getuser()
-    X = textwrap.dedent(f'''
-    [Unit]
-    Description=status email for %i to {user}
-
-    [Service]
-    Type=oneshot
-    ExecStart={SYSTEMD_EMAIL} --to {user} --unit %i --journalctl-args "-o cat"
-    # TODO why these were suggested??
-    # User=nobody
-    # Group=systemd-journal
-    ''')
-
-    write_unit(unit=f'status-email@.service', body=X, prefix=SYSTEMD_USER_DIR)
-    # I guess makes sense to reload here; fairly atomic step
-    reload()
-
+def _daemon_reload() -> None:
+    if IS_SYSTEMD:
+        check_call(_systemctl('daemon-reload'))
+    else:
+        # no-op under launchd
+        pass
 
 class Job(NamedTuple):
     when: Optional[When]
@@ -331,6 +298,7 @@ class Job(NamedTuple):
 # TODO not sure if should give it default often?
 # TODO when first? so it's more compat to crontab..
 def job(when: Optional[When], command: Command, *, unit_name: Optional[str]=None, extra_email: Optional[str]=None, **kwargs) -> Job:
+    # TODO move this to api.py file?
     """
     when: if None, then timer won't be created (still allows running job manually)
 
@@ -346,8 +314,7 @@ def job(when: Optional[When], command: Command, *, unit_name: Optional[str]=None
         kwargs=kwargs,
     )
 
-
-State = Iterable[Tuple[UnitFile, Body]]
+from .common import UnitState, State
 
 
 def _sd(s: str) -> str:
@@ -374,6 +341,10 @@ class BusManager:
 
 # TODO shit. updates across the boundairies of base directory are going to be trickier?...
 def managed_units(*, with_body: bool=True) -> State:
+    if not IS_SYSTEMD:
+        yield from launchd.launchd_state(with_body=with_body)
+        return
+
     bus = BusManager()
     states = bus.manager.ListUnits() # ok nice, it's basically instant
 
@@ -388,11 +359,11 @@ def managed_units(*, with_body: bool=True) -> State:
         # stale = int(bus.prop(props, '.Unit', 'NeedDaemonReload')) == 1
         unit_file = Path(str(bus.prop(props, '.Unit', 'FragmentPath'))).resolve()
         body = unit_file.read_text() if with_body else None
-        body = cast(str, body) # FIXME later.. for now None is only used in monitor anyway
-        yield unit_file, body
+        yield UnitState(unit_file=unit_file, body=body)
 
 
 def test_managed_units() -> None:
+    # TODO wonder if i'd be able to use launchd on ci...
     skip_if_no_systemd()
 
     # shouldn't fail at least
@@ -406,11 +377,11 @@ def test_managed_units() -> None:
 
 
 def make_state(jobs: Iterable[Job]) -> State:
-    def check(unit_name: Unit, body: Body):
+    def check(unit_name: Unit, body: Body) -> UnitState:
         verify(unit=unit_name, body=body)
         # TODO meh. think about it later...
         unit_file = DIR / unit_name
-        return (unit_file, body)
+        return UnitState(unit_file=unit_file, body=body)
 
     names: Set[Unit] = set()
 
@@ -420,20 +391,18 @@ def make_state(jobs: Iterable[Job]) -> State:
         assert uname not in names, j
         names.add(uname)
 
-        s = service(unit_name=uname, command=j.command, extra_email=j.extra_email, **j.kwargs)
-        yield check(uname + '.service', s)
+        if IS_SYSTEMD:
+            s = service(unit_name=uname, command=j.command, extra_email=j.extra_email, **j.kwargs)
+            yield check(uname + '.service', s)
 
-        when = j.when
-        if when is None:
-            continue
-        t = timer(unit_name=uname, when=when)
-        yield check(uname + '.timer', t)
-
-    # TODO otherwise just unit status or something?
-
-    # TODO FIXME enable?
-    # TODO verify everything before starting to update
-    # TODO copy files with rollback? not sure how easy it is..
+            when = j.when
+            if when is None:
+                continue
+            t = timer(unit_name=uname, when=when)
+            yield check(uname + '.timer', t)
+        else:
+            p = launchd.plist(unit_name=uname, command=j.command, when=j.when)
+            yield check(uname + '.plist', p)
 
 
 
@@ -472,8 +441,8 @@ Plan = Iterable[Action]
 
 def compute_plan(*, current: State, pending: State) -> Plan:
     # eh, I feel like i'm reinventing something already existing here...
-    currentd = OrderedDict(current)
-    pendingd = OrderedDict(pending)
+    currentd = OrderedDict((x.unit_file, unwrap(x.body)) for x in current)
+    pendingd = OrderedDict((x.unit_file, unwrap(x.body)) for x in pending)
 
     units = [c for c in currentd if c not in pendingd] + list(pendingd.keys())
     for u in units:
@@ -525,9 +494,12 @@ def apply_state(pending: State) -> None:
     logger.info('adding   : %d', len(adds)) # TODO only list ones that actually changing?
 
     for a in deletes:
-        # TODO stop timer first?
-        check_call(scu('stop'   , a.unit))
-        check_call(scu('disable', a.unit))
+        if IS_SYSTEMD:
+            # TODO stop timer first?
+            check_call(_systemctl('stop'   , a.unit))
+            check_call(_systemctl('disable', a.unit))
+        else:
+            launchd.launchctl_unload(unit=Path(a.unit).stem)
     for a in deletes:
         (DIR / a.unit).unlink() # TODO eh. not sure what do we do with user modifications?
 
@@ -541,10 +513,12 @@ def apply_state(pending: State) -> None:
         for d in diff:
             sys.stderr.write(d)
         write_unit(unit=a.unit, body=a.new_body)
+        if not IS_SYSTEMD:
+            launchd.launchctl_reload(unit=Path(a.unit).stem, unit_file=a.unit_file)
 
         if unit.endswith('.timer'):
             # TODO do we need to enable again??
-            check_call(scu('restart', a.unit))
+            check_call(_systemctl('restart', a.unit))
         # TODO some option to treat all updates as deletes then adds might be good...
 
     # TODO more logging?
@@ -557,7 +531,7 @@ def apply_state(pending: State) -> None:
     # TODO need to enable services??
 
     # need to load units before starting the timers..
-    reload()
+    _daemon_reload()
    
     for a in adds:
         unit_file = a.unit_file
@@ -565,21 +539,23 @@ def apply_state(pending: State) -> None:
         logger.info('enabling %s', unit)
         if unit.endswith('.service'):
             # quiet here because it warns that "The unit files have no installation config"
-            check_call(scu_enable(unit_file, '--quiet'))
+            check_call(_systemctl('enable', unit_file, '--quiet'))
         elif unit.endswith('.timer'):
-            check_call(scu_enable(unit_file, '--now'))
+            check_call(_systemctl('enable', unit_file, '--now'))
+        elif unit.endswith('.plist'):
+            launchd.launchctl_load(unit_file=unit_file)
         else:
             raise AssertionError(a)
 
     # TODO not sure if this reload is even necessary??
-    reload()
+    _daemon_reload()
 
 
 def manage(state: State) -> None:
     apply_state(pending=state)
 
 
-def cmd_edit():
+def cmd_edit() -> None:
     drontab = DRONTAB
     if not drontab.exists():
         if click.confirm(f"tabfile {drontab} doesn't exist. Create?", default=True):
@@ -795,6 +771,8 @@ def cmd_apply(tabfile: Path) -> None:
 
 from datetime import tzinfo
 
+# TODO what's this for???
+# TODO could show last exit status?
 class Monitor:
     def __init__(self):
         import pytz
@@ -820,11 +798,7 @@ class Monitor:
             return self.utc
 
 
-class MonParams(NamedTuple):
-    with_success_rate: bool
-    with_command: bool
-
-
+from .common import MonParams
 def _cmd_monitor(managed: State, *, params: MonParams):
     logger.debug('starting monitor...')
     # TODO reorder timers and services so timers go before?
@@ -841,7 +815,7 @@ def _cmd_monitor(managed: State, *, params: MonParams):
     bus = BusManager()
 
     lines = []
-    names = sorted(u.name for u, _ in managed)
+    names = sorted(s.unit_file.name for s in managed)
     uname = lambda full: full.split('.')[0] # TODO not very relibable..
     for k, gr in groupby(names, key=uname):
         [service, timer] = gr
@@ -960,11 +934,11 @@ def cmd_monitor(params: MonParams) -> None:
     if len(managed) == 0:
         print('No managed units!', file=sys.stderr)
     # TODO test it ?
-    _cmd_monitor(managed, params=params)
-
-
-def cmd_timers() -> None:
-    os.execvp('watch', ['watch', '-n', '0.5', ' '.join(scu('list-timers', '--all'))])
+    if IS_SYSTEMD:
+        return _cmd_monitor(managed, params=params)
+    else:
+        from . import launchd
+        return launchd._cmd_monitor(managed, params=params)
 
 
 Json = Dict[str, Any]
@@ -1006,12 +980,16 @@ def _unit_success_rate(unit: Unit) -> float:
     return success / started
 
 
-def cmd_past(unit: Unit):
-    mon = Monitor()
-    for j in _unit_logs(unit):
-        ts = mon.from_usec(j['__REALTIME_TIMESTAMP'])
-        msg = j['MESSAGE']
-        print(ts.isoformat(), msg)
+def cmd_past(unit: Unit) -> None:
+    if IS_SYSTEMD:
+        mon = Monitor()
+        for j in _unit_logs(unit):
+            ts = mon.from_usec(j['__REALTIME_TIMESTAMP'])
+            msg = j['MESSAGE']
+            print(ts.isoformat(), msg)
+    else:
+        from . import launchd
+        return launchd.cmd_past(unit)
 
 
 class VerifyOff(argparse.Action):
@@ -1164,8 +1142,6 @@ def main():
                 with_command=args.command,
             )
             cmd_monitor(params)
-    elif mode == 'timers': # TODO rename to 'monitor'?
-        cmd_timers()
     elif mode == 'past':
         cmd_past(unit=args.unit)
     elif mode == 'edit':

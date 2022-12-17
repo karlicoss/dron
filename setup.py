@@ -17,7 +17,6 @@ def main() -> None:
         package_data={name: ['py.typed']},
 
         install_requires=[
-            'dbus-python', # dbus interface to systemd
             'click',       # CLI interactions
             'tabulate'   , # for monitor
             'termcolor'  , # for monitor
@@ -31,6 +30,9 @@ def main() -> None:
             # 'repo @ git+file://DUMMY/path/to/repo',
         ],
         extras_require={
+            ':sys_platform != "darwin"': [
+                'dbus-python',  # dbus interface to systemd
+            ],
             'testing': ['pytest'],
             'linting': ['pytest', 'mypy', 'lxml'], # lxml for mypy coverage report
         },
