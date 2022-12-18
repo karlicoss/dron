@@ -108,8 +108,21 @@ def plist(*, unit_name: str, command: Command, when: Optional[When]=None) -> str
                     num = m.group(1)
                     seconds = int(num) * mult
                     break
-        assert seconds is not None, (unit_name, when)
-        mschedule = '\n'.join(('<key>StartInterval</key>', f'<integer>{seconds}</integer>'))
+        if seconds is None:
+            # try to parse as hh:mm at least
+            m = re.fullmatch(r'(\d\d):(\d\d)', when)
+            assert m is not None
+            hh = m.group(1)
+            mm = m.group(2)
+            mschedule = '\n'.join([
+                '<key>StartCalendarInterval</key>',
+                '<dict>',
+                '<key>Hour</key>'  , f'<integer>{int(hh)}</integer>',
+                '<key>Minute</key>', f'<integer>{int(mm)}</integer>',
+                '</dict>',
+            ])
+        else:
+            mschedule = '\n'.join(('<key>StartInterval</key>', f'<integer>{seconds}</integer>'))
 
     # set argv[0] properly
     # hmm I was hoping it would make desktop notifications ('background service added' nicer)
@@ -186,6 +199,8 @@ def launchd_state(with_body: bool) -> Iterator[LaunchdUnitState]:
                     last_exit_code=extras['last exit code'],
                     # pid might not be present (presumably when it's not running)
                     pid=extras.get('pid'),
+                    # TODO crap. some schedules might be cron-like
+                    # but parsing them seems like a real pain...
                     schedule=extras.get('run interval'),
                 )
             name = None
@@ -269,13 +284,13 @@ def _cmd_monitor(managed: State, *, params: MonParams) -> None:
         unit_file = s.unit_file
         name = unit_file.name.removesuffix('.plist')
 
-        is_seconds = re.fullmatch(r'(\d+) seconds', s.schedule)
+        is_seconds = re.fullmatch(r'(\d+) seconds', s.schedule or '')
         if is_seconds is not None:
             delta = timedelta(seconds=int(is_seconds.group(1)))
             # meh, but works for now
             ss = str(delta)
         else:
-            ss = s.schedule
+            ss = str(s.schedule)
 
         schedule = f'every {ss}'
         command = None
