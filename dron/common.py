@@ -40,7 +40,7 @@ class LaunchdUnitState(UnitState):
     # NOTE: can legit be str (e.g. if unit was never ran before)
     last_exit_code: str
     pid: Optional[str]
-    schedule: str # optional?
+    schedule: Optional[str]
 
 
 State = Iterable[UnitState]
