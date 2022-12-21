@@ -351,10 +351,8 @@ Error = str
 
 # eh, implicit convention that only one state will be emitted. oh well
 def lint(tabfile: Path) -> Iterator[Union[Exception, State]]:
-    # todo how to allow these to be defined in tab file?
     linters = [
-        # TODO hmm. -m is not friendly with pipx/virtualenv?
-        ['mypy', '--no-incremental', '--check-untyped', str(tabfile)],
+        [sys.executable, '-m', 'mypy', '--no-incremental', '--check-untyped', str(tabfile)],
     ]
 
     ldir = tabfile.parent
