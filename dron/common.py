@@ -46,14 +46,8 @@ class LaunchdUnitState(UnitState):
 State = Iterable[UnitState]
 
 
-try:
-    from kython.klogging2 import LazyLogger # type: ignore
-except ImportError:
-    import logging
-    logger = logging.getLogger('dron')
-else:
-    logger = LazyLogger('dron', level='info')
-
+from .logging import LazyLogger
+logger = LazyLogger('dron')
 
 
 import platform
