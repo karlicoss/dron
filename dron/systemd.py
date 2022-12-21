@@ -5,6 +5,7 @@ import json
 import getpass
 import os
 from pathlib import Path
+import re
 import shlex
 from subprocess import run, PIPE, Popen
 import sys
@@ -70,6 +71,7 @@ WantedBy=timers.target
 '''.lstrip()
 
 
+# TODO add Restart=always and RestartSec?
 # TODO allow to pass extra args
 def service(*, unit_name: str, command: Command, extra_email: Optional[str]=None, **kwargs: str) -> str:
     cmd = escape(command)
@@ -136,8 +138,10 @@ def verify_unit(*, unit: PathIsh, body: str) -> None:
         if err == b'':
             return
 
-        # TODO UGH.
-        # is not executable: No such file or directory
+        if re.fullmatch(b'.*service: Command .* is not executable: No such file or directory\n', err):
+            # ugh crap. for some reason it isn't picking up systemd environment???
+            # perhaps need to file an issue...
+            return
 
         msg = f'failed checking {unit_name}, exit code {res.returncode}'
         logger.error(msg)
@@ -304,27 +308,40 @@ def _cmd_monitor(managed: State, *, params: MonParams):
     entries: list[MonitorEntry] = []
     names = sorted(s.unit_file.name for s in managed)
     uname = lambda full: full.split('.')[0]
-    for k, gr in groupby(names, key=uname):
-        [service, timer] = gr
-        cmd = 'n/a'
-        status = 'n/a'
-
-        props = bus.properties(timer)
-        cal   = bus.prop(props, '.Timer', 'TimersCalendar')
-        last  = bus.prop(props, '.Timer', 'LastTriggerUSec')
-        next_ = bus.prop(props, '.Timer', 'NextElapseUSecRealtime')
-
-        spec = cal[0][1]  # TODO is there a more reliable way to retrieve it??
-        # todo not sure if last is really that useful..
-
-        last_dt = mon.from_usec(last)
-        next_dt = mon.from_usec(next_)
-        nexts = next_dt.astimezone(mon.local_tz).replace(tzinfo=None, microsecond=0).isoformat() # type: ignore[arg-type]
-
-        if next_dt == datetime.max:
-            left_delta = timedelta(0)
+    for k, _gr in groupby(names, key=uname):
+        gr = list(_gr)
+        # if timer is None, guess that means the job is always running?
+        timer: Optional[str]
+        service: str
+        if len(gr) == 2:
+            [service, timer] = gr
         else:
-            left_delta   = next_dt - UTCNOW
+            assert len(gr) == 1, gr
+            [service] = gr
+            timer = None
+
+        if timer is not None:
+            props = bus.properties(timer)
+            cal   = bus.prop(props, '.Timer', 'TimersCalendar')
+            last  = bus.prop(props, '.Timer', 'LastTriggerUSec')
+            next_ = bus.prop(props, '.Timer', 'NextElapseUSecRealtime')
+
+            schedule = cal[0][1]  # TODO is there a more reliable way to retrieve it??
+            # todo not sure if last is really that useful..
+
+            last_dt = mon.from_usec(last)
+            next_dt = mon.from_usec(next_)
+            nexts = next_dt.astimezone(mon.local_tz).replace(tzinfo=None, microsecond=0).isoformat() # type: ignore[arg-type]
+
+            if next_dt == datetime.max:
+                left_delta = timedelta(0)
+            else:
+                left_delta   = next_dt - UTCNOW
+        else:
+            left_delta = timedelta(0) # TODO
+            last_dt = UTCNOW
+            nexts = 'n/a'
+            schedule = 'always'
 
         # TODO maybe format seconds prettier. dunno
         def fmt_delta(d: timedelta) -> str:
@@ -387,7 +404,7 @@ def _cmd_monitor(managed: State, *, params: MonParams):
             status=status,
             left=left,
             next=nexts,
-            schedule=spec,
+            schedule=schedule,
             command=command,
             pid=pid,
             status_ok=status_ok,

@@ -76,6 +76,7 @@ Command = Union[PathIsh, Sequence[PathIsh]]
 
 OnCalendar = str
 TimerSpec = Dict[str, str] # meh # TODO why is it a dict???
+ALWAYS = 'always'
 When = Union[OnCalendar, TimerSpec]
 
 
