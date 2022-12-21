@@ -43,25 +43,27 @@ DRON_UNITS_DIR.mkdir(parents=True, exist_ok=True)
 DRONTAB = DRON_DIR / 'drontab.py'
 
 
-
-# todo maybe lru_cache? during 'apply' they are verified twice
-def verify(*, unit: PathIsh, body: str) -> None:
+UnitName = str
+def verify_units(pre_units: list[tuple[UnitName, Body]]) -> None:
     if not VERIFY_UNITS:
         return
 
     if not IS_SYSTEMD:
-        launchd.verify_unit(unit=unit, body=body)
+        for unit_name, body in pre_units:
+            launchd.verify_unit(unit_name=unit_name, body=body)
     else:
-        systemd.verify_unit(unit=unit, body=body)
+        systemd.verify_units(pre_units=pre_units)
+
+
+def verify_unit(*, unit_name: UnitName, body: Body) -> None:
+    return verify_units([(unit_name, body)])
 
 
 def write_unit(*, unit: Unit, body: Body, prefix: Path=DRON_UNITS_DIR) -> None:
     unit_file = prefix / unit
 
     logger.info('writing unit file: %s', unit_file)
-    # TODO contextmanager?
-    # I guess doesn't hurt doing it twice?
-    verify(unit=unit_file, body=body)
+    verify_unit(unit_name=unit_file.name, body=body)
     unit_file.write_text(body)
 
 
@@ -85,14 +87,8 @@ def managed_units(*, with_body: bool) -> State:
 
 from .common import ALWAYS
 def make_state(jobs: Iterable[Job]) -> State:
-    def check(unit_name: Unit, body: Body) -> UnitState:
-        verify(unit=unit_name, body=body)
-        # TODO meh. think about it later...
-        unit_file = DRON_UNITS_DIR / unit_name
-        return UnitState(unit_file=unit_file, body=body)
-
+    pre_units = []
     names: Set[Unit] = set()
-
     for j in jobs:
         uname = j.unit_name
 
@@ -101,7 +97,7 @@ def make_state(jobs: Iterable[Job]) -> State:
 
         if IS_SYSTEMD:
             s = systemd.service(unit_name=uname, command=j.command, extra_email=j.extra_email, **j.kwargs)
-            yield check(uname + '.service', s)
+            pre_units.append((uname + '.service', s))
 
             when = j.when
             if when is None:
@@ -110,10 +106,15 @@ def make_state(jobs: Iterable[Job]) -> State:
             if when == ALWAYS:
                 continue
             t = systemd.timer(unit_name=uname, when=when)
-            yield check(uname + '.timer', t)
+            pre_units.append((uname + '.timer', t))
         else:
             p = launchd.plist(unit_name=uname, command=j.command, when=j.when)
-            yield check(uname + '.plist', p)
+            pre_units.append((uname + '.plist', p))
+
+    verify_units(pre_units)
+
+    for unit_file, body in pre_units:
+        yield UnitState(unit_file=DRON_UNITS_DIR / unit_file, body=body)
 
 
 # TODO bleh. too verbose..
@@ -484,6 +485,7 @@ def apply(tabfile: Path) -> None:
 
 def cmd_lint(tabfile: Path) -> None:
     do_lint(tabfile)  # just ignore state
+    logger.info('all good')
 
 
 def cmd_apply(tabfile: Path) -> None:

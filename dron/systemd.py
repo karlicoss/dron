@@ -17,7 +17,7 @@ from . import common
 from .common import (
     IS_SYSTEMD,
     PathIsh,
-    Unit,
+    Unit, Body,
     UnitState, State,
     MANAGED_MARKER, is_managed,
     pytest_fixture,
@@ -108,7 +108,7 @@ ExecStopPost=/bin/sh -c 'if [ $$EXIT_STATUS != 0 ]; then {email_cmd}; fi'
 
 def test_managed(handle_systemd) -> None:
     skip_if_no_systemd()
-    from . import verify
+    from . import verify_unit
 
     assert is_managed(timer(unit_name='whatever', when='daily'))
 
@@ -116,54 +116,64 @@ def test_managed(handle_systemd) -> None:
 [Service]
 ExecStart=/bin/echo 123
 '''
-    verify(unit='other.service', body=custom) # precondition
+    verify_unit(unit_name='other.service', body=custom)  # precondition
     assert not is_managed(custom)
 
 
-def verify_unit(*, unit: PathIsh, body: str) -> None:
-    unit_name = Path(unit).name
-    # TODO can validate timestamps too? and security? and calendars!
-    # ugh. pipe doesn't work??
-    # e.g. 'systemd-analyze --user verify <(cat systemdtab-test.service)' results in:
-    # Failed to prepare filename /proc/self/fd/11: Invalid argument
-    with TemporaryDirectory() as tdir:
-        sfile = Path(tdir) / unit_name
-        sfile.write_text(body)
-        res = run(['systemd-analyze', '--user', 'verify', str(sfile)], stdout=PIPE, stderr=PIPE)
-        # ugh. apparently even exit code 1 doesn't guarantee correct output??
-        out = res.stdout
-        err = res.stderr
-        assert out == b'', out # not sure if that's possible..
-
-        if err == b'':
+def verify_units(pre_units: list[tuple[Unit, Body]]) -> None:
+    # ugh. systemd-analyze takes about 0.2 seconds for each unit for some reason
+    # oddly enough, in bulk it works just as fast :thinking_face:
+    # also doesn't work in parallel (i.e. parallel processes)
+    # that ends up with some weird errors trying to connect to socket
+    with TemporaryDirectory() as _tdir:
+        tdir = Path(_tdir)
+        for unit, body in pre_units:
+            (tdir / unit).write_text(body)
+        res = run(['systemd-analyze', '--user', 'verify', *tdir.glob('*')], stdout=PIPE, stderr=PIPE)
+        # ugh. apparently even exit code 0 doesn't guarantee correct output??
+        out = res.stdout.decode('utf8')
+        err = res.stderr.decode('utf8')
+        assert out == '', out
+        if err == '':
             return
 
-        if re.fullmatch(b'.*service: Command .* is not executable: No such file or directory\n', err):
-            # ugh crap. for some reason it isn't picking up systemd environment???
-            # perhaps need to file an issue...
+        err_lines = err.splitlines(keepends=True)
+        err_lines = [
+            l for l in err_lines
+            if not re.fullmatch('.*service: Command .* is not executable: No such file or directory\n', l)
+        ]
+
+        unique_err_lines = []
+        # uhh.. in bulk mode it spams with tons of 'Cannot add dependency job' for some reason
+        # I guess it kinda treats everything as dependent on each other??
+        # https://github.com/systemd/systemd/blob/b692ad36b99909453cf4f975a346e41d6afc68a0/src/core/transaction.c#L978
+        for l in err_lines:
+            if l not in unique_err_lines:
+                unique_err_lines.append(l)
+        err_lines = unique_err_lines
+
+        if len(err_lines) == 0:
             return
 
-        msg = f'failed checking {unit_name}, exit code {res.returncode}'
+        msg = f'failed checking , exit code {res.returncode}'
         logger.error(msg)
-        print(body, file=sys.stderr)
-        print('systemd-analyze output:', file=sys.stderr)
-        for line in err.decode('utf8').splitlines():
-            print(line, file=sys.stderr)
-            # TODO right, might need to install service first...
+        logger.error('systemd-analyze output:')
+        for line in err_lines:
+            logger.error(line.strip())
         raise RuntimeError(msg)
 
 
 def test_verify_systemd(handle_systemd) -> None:
     skip_if_no_systemd()
-    from . import verify
+    from . import verify_unit
 
     def fails(body: str):
         import pytest  # type: ignore[import]
         with pytest.raises(Exception):
-            verify(unit='whatever.service', body=body)
+            verify_unit(unit_name='whatever.service', body=body)
 
     def ok(body):
-        verify(unit='ok.service', body=body)
+        verify_unit(unit_name='ok.service', body=body)
 
     ok(body='''
 [Service]
