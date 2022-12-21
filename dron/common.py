@@ -159,7 +159,7 @@ def print_monitor(entries: Iterable[MonitorEntry]) -> None:
         )
         if e.pid is not None:
             e = e._replace(
-                next=termcolor.colored('running now', 'yellow'),
+                next=termcolor.colored('running', 'yellow'),
                 left='--',
             )
         items.append(e[:len(headers)])

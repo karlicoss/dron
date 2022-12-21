@@ -19,6 +19,7 @@ from .common import (
     MonParams,
     State,
     LaunchdUnitState,
+    unwrap,
 )
 
 
@@ -88,7 +89,12 @@ def plist(*, unit_name: str, command: Command, when: Optional[When]=None) -> str
     del command
 
     mschedule = ''
-    if when is not None:
+    if when is None:
+        # support later
+        assert False, unit_name
+    elif when == 'always':
+        mschedule = '<key>KeepAlive</key>\n<true/>'
+    else:
         assert isinstance(when, OnCalendar), when
         # https://www.freedesktop.org/software/systemd/man/systemd.time.html#
         seconds = {
@@ -111,7 +117,7 @@ def plist(*, unit_name: str, command: Command, when: Optional[When]=None) -> str
         if seconds is None:
             # try to parse as hh:mm at least
             m = re.fullmatch(r'(\d\d):(\d\d)', when)
-            assert m is not None
+            assert m is not None, when
             hh = m.group(1)
             mm = m.group(2)
             mschedule = '\n'.join([
@@ -123,6 +129,8 @@ def plist(*, unit_name: str, command: Command, when: Optional[When]=None) -> str
             ])
         else:
             mschedule = '\n'.join(('<key>StartInterval</key>', f'<integer>{seconds}</integer>'))
+
+    assert mschedule != '', unit_name
 
     # set argv[0] properly
     # hmm I was hoping it would make desktop notifications ('background service added' nicer)
@@ -173,25 +181,45 @@ def launchd_state(with_body: bool) -> Iterator[LaunchdUnitState]:
     # sadly doesn't look like it has json interface??
     dump = check_output(['launchctl', 'dumpstate']).decode('utf8')
 
-    name = None
+    name: Optional[str] = None
     extras: dict[str, Any] = {}
+    arguments: Optional[list[str]] = None
+    all_props: Optional[str] = None
     fields = [
         'path',
         'last exit code',
         'pid',
         'run interval',
     ]
-    arguments = None
     for line in dump.splitlines():
         if name is None:
+            # start of job description group
             name = line.removesuffix(' = {')
+            all_props = ''
             continue
         elif line == '}':
+            # end of job description group
             path = extras.get('path')
             if path is not None and 'dron' in path:
                 # otherwsie likely some sort of system unit
                 unit_file = Path(path)
                 body = unit_file.read_text() if with_body else None
+
+                # TODO extract 'state'??
+
+                periodic_schedule = extras.get('run interval')
+                calendal_schedule = 'com.apple.launchd.calendarinterval' in unwrap(all_props)
+
+                schedule: Optional[str] = None
+                if periodic_schedule is not None:
+                    schedule = 'every ' + periodic_schedule
+                elif calendal_schedule:
+                    # TODO parse properly
+                    schedule = 'calendar'
+                else:
+                    # NOTE: seems like keepalive attribute isn't present in launcd dumpstate output
+                    schedule = 'always'
+
                 yield LaunchdUnitState(
                     unit_file=Path(path),
                     body=body,
@@ -199,13 +227,16 @@ def launchd_state(with_body: bool) -> Iterator[LaunchdUnitState]:
                     last_exit_code=extras['last exit code'],
                     # pid might not be present (presumably when it's not running)
                     pid=extras.get('pid'),
-                    # TODO crap. some schedules might be cron-like
-                    # but parsing them seems like a real pain...
-                    schedule=extras.get('run interval'),
+                    schedule=schedule,
                 )
             name = None
+            all_props = None
             extras = {}
-        elif arguments is not None:
+            continue
+
+        all_props = unwrap(all_props) + line + '\n'
+
+        if arguments is not None:
             if line == '\t}':
                 extras['arguments'] = arguments
                 arguments = None
@@ -284,15 +315,15 @@ def _cmd_monitor(managed: State, *, params: MonParams) -> None:
         unit_file = s.unit_file
         name = unit_file.name.removesuffix('.plist')
 
-        is_seconds = re.fullmatch(r'(\d+) seconds', s.schedule or '')
+        is_seconds = re.fullmatch(r'every (\d+) seconds', s.schedule or '')
         if is_seconds is not None:
             delta = timedelta(seconds=int(is_seconds.group(1)))
             # meh, but works for now
-            ss = str(delta)
+            ss = f'every {delta}'
         else:
             ss = str(s.schedule)
 
-        schedule = f'every {ss}'
+        schedule = ss
         command = None
         if params.with_command:
             cmd = s.cmdline[3:]  # chop off wrapper script for local mail
