@@ -138,11 +138,6 @@ def verify_units(pre_units: list[tuple[Unit, Body]]) -> None:
             return
 
         err_lines = err.splitlines(keepends=True)
-        err_lines = [
-            l for l in err_lines
-            if not re.fullmatch('.*service: Command .* is not executable: No such file or directory\n', l)
-        ]
-
         unique_err_lines = []
         # uhh.. in bulk mode it spams with tons of 'Cannot add dependency job' for some reason
         # I guess it kinda treats everything as dependent on each other??
