@@ -83,6 +83,7 @@ def managed_units(*, with_body: bool) -> State:
         yield from launchd.launchd_state(with_body=with_body)
 
 
+from .common import ALWAYS
 def make_state(jobs: Iterable[Job]) -> State:
     def check(unit_name: Unit, body: Body) -> UnitState:
         verify(unit=unit_name, body=body)
@@ -104,6 +105,9 @@ def make_state(jobs: Iterable[Job]) -> State:
 
             when = j.when
             if when is None:
+                # manual job?
+                continue
+            if when == ALWAYS:
                 continue
             t = systemd.timer(unit_name=uname, when=when)
             yield check(uname + '.timer', t)
@@ -172,6 +176,14 @@ def compute_plan(*, current: State, pending: State) -> Plan:
 # TODO it's not apply, more like 'compute' and also plan is more like a diff between states?
 def apply_state(pending: State) -> None:
     current = list(managed_units(with_body=True))
+
+    pending_units = {s.unit_file.name for s in pending}
+    def is_always_running(unit_path: Path) -> bool:
+        name = unit_path.stem
+        has_timer = f'{name}.timer' in pending_units
+        # TODO meh. not ideal
+        return not has_timer
+
     plan = list(compute_plan(current=current, pending=pending))
 
     deletes: list[Delete] = []
@@ -219,11 +231,17 @@ def apply_state(pending: State) -> None:
         for d in diff:
             sys.stderr.write(d)
         write_unit(unit=a.unit, body=a.new_body)
-        if not IS_SYSTEMD:
+        if IS_SYSTEMD:
+            if unit.endswith('.service') and is_always_running(a.unit_file):
+                # persistent unit needs a restart to pick up change
+                _daemon_reload()
+                check_call(_systemctl('restart', a.unit))
+        else:
             launchd.launchctl_reload(unit=Path(a.unit).stem, unit_file=a.unit_file)
 
         if unit.endswith('.timer'):
             # TODO do we need to enable again??
+            _daemon_reload()
             check_call(_systemctl('restart', a.unit))
         # TODO some option to treat all updates as deletes then adds might be good...
 
@@ -234,8 +252,6 @@ def apply_state(pending: State) -> None:
         # TODO when we add, assert that previous unit wasn't managed? otherwise we overwrite something
         write_unit(unit=a.unit, body=a.body)
 
-    # TODO need to enable services??
-
     # need to load units before starting the timers..
     _daemon_reload()
    
@@ -245,7 +261,11 @@ def apply_state(pending: State) -> None:
         logger.info('enabling %s', unit)
         if unit.endswith('.service'):
             # quiet here because it warns that "The unit files have no installation config"
-            check_call(_systemctl('enable', unit_file, '--quiet'))
+            # TODO maybe add [Install] section? dunno
+            maybe_now = []
+            if is_always_running(unit_file):
+                maybe_now = ['--now']
+            check_call(_systemctl('enable', unit_file, '--quiet', *maybe_now))
         elif unit.endswith('.timer'):
             check_call(_systemctl('enable', unit_file, '--now'))
         elif unit.endswith('.plist'):

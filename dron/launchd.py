@@ -14,7 +14,7 @@ from .common import (
     PathIsh,
     Unit, Body, UnitFile,
     Command,
-    When, OnCalendar,
+    When, OnCalendar, ALWAYS,
     logger,
     MonParams,
     State,
@@ -54,7 +54,7 @@ def fqn(name: Unit) -> str:
 
 def launchctl_load(*, unit_file: UnitFile) -> None:
     # bootstrap is nicer than load
-    # load is super defensive, returns code 1 on errors
+    # load is super defensive, returns code 0 on errors
     check_call(_launchctl('bootstrap', _LAUNCHD_DOMAIN, unit_file))
     _launch_agent(unit_file.name).symlink_to(unit_file)
 
@@ -92,7 +92,7 @@ def plist(*, unit_name: str, command: Command, when: Optional[When]=None) -> str
     if when is None:
         # support later
         assert False, unit_name
-    elif when == 'always':
+    elif when == ALWAYS:
         mschedule = '<key>KeepAlive</key>\n<true/>'
     else:
         assert isinstance(when, OnCalendar), when
