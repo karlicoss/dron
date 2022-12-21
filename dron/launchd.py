@@ -255,9 +255,9 @@ def launchd_state(with_body: bool) -> Iterator[LaunchdUnitState]:
                 arguments = []
 
 
-def verify_unit(*, unit: PathIsh, body: str) -> None:
+def verify_unit(*, unit_name: str, body: str) -> None:
     with TemporaryDirectory() as tdir:
-        tfile = Path(tdir) / Path(unit).name
+        tfile = Path(tdir) / unit_name
         tfile.write_text(body)
         check_call([
             'plutil', '-lint',
