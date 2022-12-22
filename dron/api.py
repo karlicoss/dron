@@ -18,13 +18,18 @@ class Job(NamedTuple):
     kwargs: dict[str, str]
 
 
+# staticmethod isn't callable directly prior to 3.10
+def _email(to: str) -> str:
+    return f'python3 -m dron.notify.email --job %n --to {to}'
+
+
 class notify:
     @staticmethod
     def email(to: str) -> str:
-        return f'python3 -m dron.notify.email --job %n --to {to}'
+        return _email(to)
 
     # TODO adapt to macos
-    email_local = email(to='%u')
+    email_local = _email(to='%u')
 
     # TODO adapt to macos
     desktop_notification = 'python3 -m dron.notify.ntfy_linux --job %n'
