@@ -24,7 +24,7 @@ class notify:
         return f'python3 -m dron.notify.email --job %n --to {to}'
 
     # TODO adapt to macos
-    email_local = email(to='%n')
+    email_local = email(to='%u')
 
     # TODO adapt to macos
     desktop_notification = 'python3 -m dron.notify.ntfy_linux --job %n'
