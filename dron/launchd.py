@@ -1,5 +1,6 @@
 from datetime import timedelta
 import json
+import os
 from pathlib import Path
 import re
 import shlex
@@ -20,14 +21,13 @@ from .common import (
     State,
     LaunchdUnitState,
     unwrap,
+    MANAGED_MARKER,
 )
 
 
 # TODO custom launchd domain?? maybe instead could do dron/ or something?
-_LAUNCHD_DOMAIN = 'gui/501'
+_LAUNCHD_DOMAIN = f'gui/{os.getuid()}'
 
-
-_MANAGED_MARKER = 'MANAGED BY DRON'
 
 # in principle not necessary...
 # but makes it much easier to filter out logs & lobs from launchctl dump
@@ -70,6 +70,13 @@ def launchctl_reload(*, unit: Unit, unit_file: UnitFile) -> None:
     # don't think there is a better way?
     launchctl_unload(unit=unit)
     launchctl_load(unit_file=unit_file)
+
+
+_LAUNCHD_WRAPPER = [
+    sys.executable,
+    '-m',
+    'dron.launchd_wrapper',
+]
 
 
 def plist(*, unit_name: str, command: Command, when: Optional[When]=None) -> str:
@@ -132,17 +139,12 @@ def plist(*, unit_name: str, command: Command, when: Optional[When]=None) -> str
 
     assert mschedule != '', unit_name
 
-    # set argv[0] properly
+    # attempt to set argv[0] properly
     # hmm I was hoping it would make desktop notifications ('background service added' nicer)
     # but even after that it still only shows executable script name. ugh
     # program_argv = (unit_name, *cmd[1:])
-    # hm maybe need to do the same for systemd helper? instead of 'installing' in setup.py
-    # just need to make sure to pass sys.executable because pip copies files as non-executablepip copies files as non-executable
-    LAUNCHD_WRAPPER = Path(__file__).parent / 'launchd_wrapper.py'
     program_argv = (
-        sys.executable,
-        LAUNCHD_WRAPPER,
-        unit_name,
+        *_LAUNCHD_WRAPPER, unit_name,
         *cmd,
     )
     del cmd
@@ -169,7 +171,7 @@ def plist(*, unit_name: str, command: Command, when: Optional[When]=None) -> str
 {textwrap.indent(mschedule, " " * 8)}
 
     <key>Comment</key>
-    <string>{_MANAGED_MARKER}</string>
+    <string>{MANAGED_MARKER}</string>
 </dict>
 </plist>
 '''.lstrip()
@@ -326,8 +328,9 @@ def _cmd_monitor(managed: State, *, params: MonParams) -> None:
         schedule = ss
         command = None
         if params.with_command:
-            cmd = s.cmdline[3:]  # chop off wrapper script for local mail
-            command = ' '.join(map(shlex.quote, cmd))
+            command = ' '.join(map(shlex.quote, s.cmdline))
+            prefix = _LAUNCHD_WRAPPER + [name]
+            command = command.removeprefix(' '.join(prefix))
 
         status_ok = s.last_exit_code == '0'
         status = 'success' if status_ok else f'exitcode {s.last_exit_code}'
