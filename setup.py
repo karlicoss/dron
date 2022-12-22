@@ -5,16 +5,23 @@ from setuptools import setup, find_namespace_packages # type: ignore
 
 
 def main() -> None:
-    name = 'dron'
+    pkg = 'dron'
+    subpkgs = find_namespace_packages('.', include=('dron.*',))
     setup(
-        name=name,
+        name=pkg,
+        use_scm_version={
+            'version_scheme': 'python-simplified-semver',
+            'local_scheme': 'dirty-tag',
+        },
+        setup_requires=['setuptools_scm'],
 
         # otherwise mypy won't work
         # https://mypy.readthedocs.io/en/stable/installed_packages.html#making-pep-561-compatible-packages
         zip_safe=False,
 
-        packages=[name],
-        package_data={name: ['py.typed']},
+        packages=[pkg, *subpkgs],
+        # necessary so that package works with mypy
+        package_data={pkg: ['py.typed']},
 
         install_requires=[
             'click',       # CLI interactions
@@ -37,7 +44,7 @@ def main() -> None:
             'linting': ['pytest', 'mypy', 'lxml'], # lxml for mypy coverage report
         },
 
-        entry_points={'console_scripts': ['dron = dron:main', 'systemd_email = dron.systemd_email:main']},
+        entry_points={'console_scripts': ['dron = dron:main']},
 
         # this needs to be set if you're planning to upload to pypi
         # url='',
@@ -52,3 +59,4 @@ def main() -> None:
 
 if __name__ == '__main__':
     main()
+
