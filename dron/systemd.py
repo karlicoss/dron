@@ -2,18 +2,14 @@ from datetime import datetime, timedelta
 from functools import lru_cache
 from itertools import groupby
 import json
-import getpass
 import os
 from pathlib import Path
-import re
 import shlex
 from subprocess import run, PIPE, Popen
-import sys
 from tempfile import TemporaryDirectory
-from typing import Optional, Iterator, Any
+from typing import Optional, Iterator, Any, Sequence
 
 
-from . import common
 from .common import (
     IS_SYSTEMD,
     PathIsh,
@@ -22,9 +18,13 @@ from .common import (
     MANAGED_MARKER, is_managed,
     pytest_fixture,
     Command,
-    TimerSpec, When, OnCalendar,
+    TimerSpec,
     logger,
     escape,
+)
+from .api import (
+    When, OnCalendar,
+    OnFailureAction,
 )
 
 
@@ -73,25 +73,30 @@ WantedBy=timers.target
 
 # TODO add Restart=always and RestartSec?
 # TODO allow to pass extra args
-def service(*, unit_name: str, command: Command, extra_email: Optional[str]=None, **kwargs: str) -> str:
-    cmd = escape(command)
+def service(
+        *,
+        unit_name: str,
+        command: Command,
+        on_failure: Sequence[OnFailureAction],
+        **kwargs: str,
+) -> str:
     # TODO not sure if something else needs to be escaped for ExecStart??
     # todo systemd-escape? but only can be used for names
 
     # TODO ugh. how to allow injecting arbitrary stuff, not only in [Service] section?
-
     extras = '\n'.join(f'{k}={v}' for k, v in kwargs.items())
 
-    mextra = '' if extra_email is None else f',{extra_email}'
-
-    user = getpass.getuser()
-    # TODO instead, use relative path?
-    SYSTEMD_EMAIL = Path('~/.local/bin/systemd_email').expanduser()
-    email_cmd = f'{SYSTEMD_EMAIL} --to {user}{mextra} --unit %n'
 
     # ok OnFailure is quite annoying since it can't take arguments etc... seems much easier to use ExecStopPost
     # (+ can possibly run on success too that way?)
     # https://unix.stackexchange.com/a/441662/180307
+    cmd = escape(command)
+
+    exec_stop_post = '\n'.join(
+        f"ExecStopPost=/bin/sh -c 'if [ $$EXIT_STATUS != 0 ]; then {action}; fi'"
+        for action in on_failure
+    )
+
     res = f'''
 {managed_header()}
 [Unit]
@@ -99,10 +104,9 @@ Description=Service for {unit_name} {MANAGED_MARKER}
 
 [Service]
 ExecStart={cmd}
-ExecStopPost=/bin/sh -c 'if [ $$EXIT_STATUS != 0 ]; then {email_cmd}; fi'
+{exec_stop_post}
 {extras}
 '''.lstrip()
-    # TODO need to make sure logs are preserved?
     return res
 
 
@@ -175,7 +179,12 @@ def test_verify_systemd(handle_systemd) -> None:
 ExecStart=/bin/echo 123
 ''')
 
-    ok(body=service(unit_name='alala', command='/bin/echo 123'))
+    from .api import notify
+    on_failure = (
+        notify.email('test@gmail.com'),
+        notify.desktop_notification,
+    )
+    ok(body=service(unit_name='alala', command='/bin/echo 123', on_failure=on_failure))
 
     # garbage
     fails(body='fewfewf')
@@ -264,6 +273,7 @@ def handle_systemd():
     If we can't use systemd, we need to suppress systemd-specific linting
     '''
     reason = is_missing_systemd()
+    from . import common
     if reason is not None:
         common.VERIFY_UNITS = False
     try:

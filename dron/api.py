@@ -1,4 +1,4 @@
-from typing import NamedTuple, Optional
+from typing import NamedTuple, Optional, Sequence
 
 from .common import (
     Command,
@@ -7,38 +7,55 @@ from .common import (
 )
 
 
+OnFailureAction = str
+
+
 class Job(NamedTuple):
     when: Optional[When]
     command: Command
     unit_name: str
-    extra_email: Optional[str]
+    on_failure: Sequence[OnFailureAction]
     kwargs: dict[str, str]
 
 
-# TODO think about arg names?
-# TODO not sure if should give it default often?
-# TODO when first? so it's more compat to crontab..
-def job(when: Optional[When], command: Command, *, unit_name: Optional[str]=None, extra_email: Optional[str]=None, **kwargs) -> Job:
-    """
-    when: if None, then timer won't be created (still allows running job manually)
+class notify:
+    @staticmethod
+    def email(to: str) -> str:
+        return f'python3 -m dron.notify.email --job %n --to {to}'
+
+    # TODO adapt to macos
+    email_local = email(to='%n')
+
+    # TODO adapt to macos
+    desktop_notification = 'python3 -m dron.notify.ntfy_linux --job %n'
+
+    telegram = 'python3 -m dron.notify.ntfy_telegram --job %n'
+
+
+def job(when: Optional[When], command: Command, *, unit_name: str, on_failure: Sequence[OnFailureAction]=(notify.email_local,), **kwargs) -> Job:
+    assert 'extra_email' not in kwargs, unit_name  # deprecated
 
     """
-    assert unit_name is not None
+    when: if None, then timer won't be created (still allows running job manually)
+    """
     # TODO later, autogenerate unit name
     # I guess warn user about non-unique names and prompt to give a more specific name?
     return Job(
         when=when,
         command=command,
         unit_name=unit_name,
-        extra_email=extra_email,
+        on_failure=on_failure,
         kwargs=kwargs,
     )
 
 
 __all__ = (
-    'Job',
-    'job',
-    'Command',
+    'When',
     'OnCalendar',
-    'wrap',
+    'OnFailureAction',
+    'Command', 'wrap',
+    'job',
+    'notify',
+
+    'Job',  # todo maybe don't expose it?
 )
