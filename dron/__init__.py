@@ -188,16 +188,16 @@ def apply_state(pending: State) -> None:
     plan = list(compute_plan(current=current, pending=pending))
 
     deletes: list[Delete] = []
-    updates: list[Update] = []
-    adds   : list[Add]    = []
+    adds: list[Add] = []
+    _updates: list[Update] = []
 
     for a in plan:
         if isinstance(a, Delete):
             deletes.append(a)
-        elif isinstance(a, Update):
-            updates.append(a)
         elif isinstance(a, Add):
             adds.append(a)
+        elif isinstance(a, Update):
+            _updates.append(a)
         else:
             raise AssertionError("Can't happen", a)
 
@@ -208,9 +208,26 @@ def apply_state(pending: State) -> None:
         else:
             raise RuntimeError(msg)
 
-    logger.info('disabling: %d', len(deletes)) # TODO rename to disables?
-    logger.info('updating : %d', len(updates)) # TODO list unit names?
-    logger.info('adding   : %d', len(adds)) # TODO only list ones that actually changing?
+    Diff = list[str]
+    nochange: list[Update] = []
+    updates: list[tuple[Update, Diff]] = []
+
+    for u in _updates:
+        unit = a.unit
+        diff: Diff = list(unified_diff(
+            u.old_body.splitlines(keepends=True),
+            u.new_body.splitlines(keepends=True),
+        ))
+        if len(diff) == 0:
+            nochange.append(u)
+        else:
+            updates.append((u, diff))
+
+    # TODO list unit names here?
+    logger.info('no change: %d', len(nochange))
+    logger.info('disabling: %d', len(deletes))
+    logger.info('updating : %d', len(updates))
+    logger.info('adding   : %d', len(adds))
 
     for a in deletes:
         if IS_SYSTEMD:
@@ -220,30 +237,26 @@ def apply_state(pending: State) -> None:
         else:
             launchd.launchctl_unload(unit=Path(a.unit).stem)
     for a in deletes:
-        (DRON_UNITS_DIR / a.unit).unlink() # TODO eh. not sure what do we do with user modifications?
+        (DRON_UNITS_DIR / a.unit).unlink()
 
-    # TODO not sure how to support 'dirty' units detection...
-    for a in updates:
-        unit = a.unit
-        diff = list(unified_diff(a.old_body.splitlines(keepends=True), a.new_body.splitlines(keepends=True)))
-        if len(diff) == 0:
-            continue
+
+    for (u, diff) in updates:
         logger.info('updating %s', unit)
         for d in diff:
             sys.stderr.write(d)
-        write_unit(unit=a.unit, body=a.new_body)
+        write_unit(unit=u.unit, body=u.new_body)
         if IS_SYSTEMD:
-            if unit.endswith('.service') and is_always_running(a.unit_file):
+            if unit.endswith('.service') and is_always_running(u.unit_file):
                 # persistent unit needs a restart to pick up change
                 _daemon_reload()
-                check_call(_systemctl('restart', a.unit))
+                check_call(_systemctl('restart', u.unit))
         else:
-            launchd.launchctl_reload(unit=Path(a.unit).stem, unit_file=a.unit_file)
+            launchd.launchctl_reload(unit=Path(u.unit).stem, unit_file=u.unit_file)
 
         if unit.endswith('.timer'):
             # TODO do we need to enable again??
             _daemon_reload()
-            check_call(_systemctl('restart', a.unit))
+            check_call(_systemctl('restart', u.unit))
         # TODO some option to treat all updates as deletes then adds might be good...
 
     # TODO more logging?
