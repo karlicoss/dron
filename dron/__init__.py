@@ -241,25 +241,25 @@ def apply_state(pending: State) -> None:
 
 
     for (u, diff) in updates:
+        unit = u.unit
+        unit_file = u.unit_file
         logger.info('updating %s', unit)
         for d in diff:
             sys.stderr.write(d)
         write_unit(unit=u.unit, body=u.new_body)
         if IS_SYSTEMD:
-            if unit.endswith('.service') and is_always_running(u.unit_file):
+            if unit.endswith('.service') and is_always_running(unit_file):
                 # persistent unit needs a restart to pick up change
                 _daemon_reload()
-                check_call(_systemctl('restart', u.unit))
+                check_call(_systemctl('restart', unit))
         else:
-            launchd.launchctl_reload(unit=Path(u.unit).stem, unit_file=u.unit_file)
+            launchd.launchctl_reload(unit=Path(unit).stem, unit_file=unit_file)
 
         if unit.endswith('.timer'):
-            # TODO do we need to enable again??
             _daemon_reload()
+            # NOTE: need to be careful -- seems that job might trigger straightaway if it's on interval schedule
+            # so if we change something unrelated (e.g. whitespace), it will start all jobs at the same time??
             check_call(_systemctl('restart', u.unit))
-        # TODO some option to treat all updates as deletes then adds might be good...
-
-    # TODO more logging?
 
     for a in adds:
         logger.info('adding %s', a.unit_file)
