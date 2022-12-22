@@ -96,7 +96,7 @@ def make_state(jobs: Iterable[Job]) -> State:
         names.add(uname)
 
         if IS_SYSTEMD:
-            s = systemd.service(unit_name=uname, command=j.command, extra_email=j.extra_email, **j.kwargs)
+            s = systemd.service(unit_name=uname, command=j.command, on_failure=j.on_failure, **j.kwargs)
             pre_units.append((uname + '.service', s))
 
             when = j.when
@@ -386,7 +386,6 @@ def lint(tabfile: Path) -> Iterator[Union[Exception, State]]:
         logger.info('Running: %s', ' '.join(map(shlex.quote, l)))
         with TemporaryDirectory() as td:
             env = {**os.environ}
-            env = extra_path('PYTHONPATH', dtab_dir, env)
             env = extra_path('MYPYPATH'  , dtab_dir, env)
 
             r = run(l, cwd=str(ldir), env=env)
