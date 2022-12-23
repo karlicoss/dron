@@ -1,9 +1,11 @@
+import getpass
 from typing import NamedTuple, Optional, Sequence
 
 from .common import (
     Command,
     When, OnCalendar,
     wrap,
+    IS_SYSTEMD,
 )
 
 
@@ -28,11 +30,10 @@ class notify:
     def email(to: str) -> str:
         return _email(to)
 
-    # TODO adapt to macos
-    email_local = _email(to='%u')
+    email_local = _email(to='%u' if IS_SYSTEMD else getpass.getuser())
 
     # TODO adapt to macos
-    desktop_notification = 'python3 -m dron.notify.ntfy_linux --job %n'
+    desktop_notification = 'python3 -m dron.notify.ntfy_desktop --job %n'
 
     telegram = 'python3 -m dron.notify.ntfy_telegram --job %n'
 
