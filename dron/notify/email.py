@@ -2,6 +2,7 @@
 import shlex
 import socket
 from subprocess import Popen, PIPE, STDOUT
+import sys
 from typing import Iterator
 
 from .common import get_parser
@@ -18,7 +19,7 @@ def send_payload(payload: Iterator[bytes]) -> None:
     assert rc == 0, rc
 
 
-def get_last_log(job: str) -> Iterator[bytes]:
+def get_last_systemd_log(job: str) -> Iterator[bytes]:
     inf = '1000000'
     cmd = ['systemctl', '--user', 'status', '--no-pager', '--lines', inf, job, '-o', 'cat']
     yield ' '.join(map(shlex.quote, cmd)).encode('utf8') + b'\n\n'
@@ -33,7 +34,11 @@ def get_last_log(job: str) -> Iterator[bytes]:
     }, rc
 
 
-def send_email(*, to: str, job: str) -> None:
+def get_stdin() -> Iterator[bytes]:
+    yield from sys.stdin.buffer
+
+
+def send_email(*, to: str, job: str, stdin: bool) -> None:
     def payload() -> Iterator[bytes]:
         hostname = socket.gethostname()
         yield f'''
@@ -43,7 +48,8 @@ Subject: {job}
 Content-Transfer-Encoding: 8bit
 Content-Type: text/plain; charset=UTF-8
 '''.lstrip().encode('utf8')
-        yield from get_last_log(job)
+        last_log = get_stdin() if stdin else get_last_systemd_log(job)
+        yield from last_log
 
     send_payload(payload())
 
@@ -52,7 +58,7 @@ def main() -> None:
     p = get_parser()
     p.add_argument('--to', required=True)
     args = p.parse_args()
-    send_email(to=args.to, job=args.job)
+    send_email(to=args.to, job=args.job, stdin=args.stdin)
 
 
 if __name__ == '__main__':

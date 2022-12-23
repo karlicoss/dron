@@ -108,7 +108,7 @@ def make_state(jobs: Iterable[Job]) -> State:
             t = systemd.timer(unit_name=uname, when=when)
             pre_units.append((uname + '.timer', t))
         else:
-            p = launchd.plist(unit_name=uname, command=j.command, when=j.when)
+            p = launchd.plist(unit_name=uname, command=j.command, on_failure=j.on_failure, when=j.when)
             pre_units.append((uname + '.plist', p))
 
     verify_units(pre_units)

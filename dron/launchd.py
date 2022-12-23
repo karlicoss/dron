@@ -1,4 +1,5 @@
 from datetime import timedelta
+import itertools
 import json
 import os
 from pathlib import Path
@@ -14,14 +15,18 @@ from typing import Sequence, Optional, Iterator, Any
 from .common import (
     PathIsh,
     Unit, Body, UnitFile,
+    ALWAYS,
     Command,
-    When, OnCalendar, ALWAYS,
     logger,
     MonParams,
     State,
     LaunchdUnitState,
     unwrap,
     MANAGED_MARKER,
+)
+from .api import (
+    When, OnCalendar,
+    OnFailureAction,
 )
 
 
@@ -72,14 +77,32 @@ def launchctl_reload(*, unit: Unit, unit_file: UnitFile) -> None:
     launchctl_load(unit_file=unit_file)
 
 
-_LAUNCHD_WRAPPER = [
-    sys.executable,
-    '-m',
-    'dron.launchd_wrapper',
-]
+def launchd_wrapper(*, job: str, on_failure: list[str]) -> list[str]:
+    return [
+        sys.executable,
+        '-m',
+        'dron.launchd_wrapper',
+        *itertools.chain.from_iterable(('--notify', n) for n in on_failure),
+        '--job', job,
+        '--',
+    ]
 
 
-def plist(*, unit_name: str, command: Command, when: Optional[When]=None) -> str:
+def remove_launchd_wrapper(cmd: str) -> str:
+    if not ' dron.launchd_wrapper ' in cmd:
+        return cmd
+    # uhh... not super reliable, but this is only used for monitor so hopefully fine
+    [_, cmd] = cmd.split(' -- ', maxsplit=1)
+    return cmd
+
+
+def plist(
+        *,
+        unit_name: str,
+        command: Command,
+        on_failure: Sequence[OnFailureAction],
+        when: Optional[When]=None,
+) -> str:
     # TODO hmm, kinda mirrors 'escape' method, not sure
     cmd: Sequence[str]
     if isinstance(command, (list, tuple)):
@@ -139,12 +162,18 @@ def plist(*, unit_name: str, command: Command, when: Optional[When]=None) -> str
 
     assert mschedule != '', unit_name
 
+    # meh.. not sure how to reconcile it better with systemd
+    on_failure = [
+        x.replace('--job %n', f'--job {unit_name}') + ' --stdin'
+        for x in on_failure
+    ]
+
     # attempt to set argv[0] properly
     # hmm I was hoping it would make desktop notifications ('background service added' nicer)
     # but even after that it still only shows executable script name. ugh
     # program_argv = (unit_name, *cmd[1:])
     program_argv = (
-        *_LAUNCHD_WRAPPER, unit_name,
+        *launchd_wrapper(job=unit_name, on_failure=on_failure),
         *cmd,
     )
     del cmd
@@ -329,8 +358,7 @@ def _cmd_monitor(managed: State, *, params: MonParams) -> None:
         command = None
         if params.with_command:
             command = ' '.join(map(shlex.quote, s.cmdline))
-            prefix = _LAUNCHD_WRAPPER + [name]
-            command = command.removeprefix(' '.join(prefix))
+            command = remove_launchd_wrapper(command)
 
         status_ok = s.last_exit_code == '0'
         status = 'success' if status_ok else f'exitcode {s.last_exit_code}'
