@@ -6,6 +6,7 @@ from itertools import groupby
 import json
 import os
 from pathlib import Path
+import re
 import shlex
 from subprocess import run, PIPE, Popen
 from tempfile import TemporaryDirectory
@@ -81,30 +82,45 @@ def service(
     # TODO not sure if something else needs to be escaped for ExecStart??
     # todo systemd-escape? but only can be used for names
 
-    # TODO ugh. how to allow injecting arbitrary stuff, not only in [Service] section?
-    extras = '\n'.join(f'{k}={v}' for k, v in kwargs.items())
-
-
     # ok OnFailure is quite annoying since it can't take arguments etc... seems much easier to use ExecStopPost
     # (+ can possibly run on success too that way?)
     # https://unix.stackexchange.com/a/441662/180307
     cmd = escape(command)
 
-    exec_stop_post = '\n'.join(
+    exec_stop_posts = [
         f"ExecStopPost=/bin/sh -c 'if [ $$EXIT_STATUS != 0 ]; then {action}; fi'"
         for action in on_failure
-    )
+    ]
 
-    res = f'''
-{managed_header()}
-[Unit]
+    sections: dict[str, list[str]] = {}
+    sections['[Unit]'] = [f'''
 Description=Service for {unit_name} {MANAGED_MARKER}
+'''.strip()]
 
-[Service]
-ExecStart={cmd}
-{exec_stop_post}
-{extras}
-'''.lstrip()
+    sections['[Service]'] = [
+        f'ExecStart={cmd}',
+        *exec_stop_posts,
+    ]
+
+    for k, value in kwargs.items():
+        # ideally it would have section name
+        m = re.search(r'(\[\w+\])(.*)', k)
+        if m is not None:
+            section = m.group(1)
+            key = m.group(2)
+        else:
+            # 'legacy' behaviour, by default put into [Service]
+            section = '[Service]'
+            key = k
+        if section not in sections:
+            sections[section] = []
+        sections[section].append(f'{key}={value}')
+
+    res = managed_header()
+    for section_name, lines in sections.items():
+        res += '\n\n' + '\n'.join([section_name, *lines])
+    res += '\n'
+
     return res
 
 
