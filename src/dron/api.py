@@ -22,6 +22,7 @@ class Job(NamedTuple):
 
 # staticmethod isn't callable directly prior to 3.10
 def _email(to: str) -> str:
+    # TODO need to use sys.executable?
     return f'python3 -m dron.notify.email --job %n --to {to}'
 
 

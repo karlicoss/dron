@@ -3,7 +3,7 @@ from dataclasses import dataclass
 from pathlib import Path
 import shlex
 import sys
-from typing import NamedTuple, Iterable, Tuple, Optional, Sequence, Union, Dict, Any
+from typing import NamedTuple, Iterable, Optional, Sequence, Union, Dict, Any
 
 
 # TODO can remove this? although might be useful for tests
