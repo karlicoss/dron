@@ -167,7 +167,7 @@ def test_verify_systemd(handle_systemd) -> None:
     from . import verify_unit
 
     def fails(body: str):
-        import pytest  # type: ignore[import]
+        import pytest
         with pytest.raises(Exception):
             verify_unit(unit_name='whatever.service', body=body)
 
@@ -260,7 +260,7 @@ def test_managed_units() -> None:
 
 
 def skip_if_no_systemd() -> None:
-    import pytest # type: ignore
+    import pytest
     reason = is_missing_systemd()
     if reason is not None:
         pytest.skip(f'No systemd: {reason}')
@@ -296,7 +296,7 @@ class MonitorHelper:
         else:
             return self.utc.localize(datetime.utcfromtimestamp(u / 10 ** 6))
 
-    @property # type: ignore[misc]
+    @property
     @lru_cache
     def local_tz(self):
         # TODO warning if tzlocal isn't installed?

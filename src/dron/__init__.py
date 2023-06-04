@@ -579,7 +579,7 @@ dron -- simple frontend for Systemd, inspired by cron.
 
 dron is my attempt to overcome things that make working with Systemd tedious
 '''.lstrip(),
-        formatter_class=lambda prog: argparse.RawTextHelpFormatter(prog, width=100),  # type: ignore
+        formatter_class=lambda prog: argparse.RawTextHelpFormatter(prog, width=100),
     )
     # TODO ugh. when you type e.g. 'dron apply', help format is wrong..
     example = ''.join(': ' + l for l in _drontab_example().splitlines(keepends=True))
