@@ -29,8 +29,6 @@ from .api import (
 
 
 def is_missing_systemd() -> Optional[str]:
-    if 'GITHUB_ACTION' in os.environ:
-        return "github actions don't have systemd"
     if not IS_SYSTEMD:
         return "running on macos"
     return None
@@ -110,7 +108,7 @@ ExecStart={cmd}
     return res
 
 
-def test_managed(handle_systemd) -> None:
+def test_managed() -> None:
     skip_if_no_systemd()
     from . import verify_unit
 
@@ -162,7 +160,7 @@ def verify_units(pre_units: list[tuple[Unit, Body]]) -> None:
         raise RuntimeError(msg)
 
 
-def test_verify_systemd(handle_systemd) -> None:
+def test_verify_systemd() -> None:
     skip_if_no_systemd()
     from . import verify_unit
 
@@ -244,8 +242,8 @@ def systemd_state(*, with_body: bool) -> State:
 
 
 def test_managed_units() -> None:
-    # TODO wonder if i'd be able to use launchd on ci...
     skip_if_no_systemd()
+    # TODO wonder if i'd be able to use launchd on ci...
     from . import managed_units, cmd_monitor
     from .common import MonParams
 
@@ -264,22 +262,6 @@ def skip_if_no_systemd() -> None:
     reason = is_missing_systemd()
     if reason is not None:
         pytest.skip(f'No systemd: {reason}')
-
-
-# TODO eh, come up with a better name
-@pytest_fixture
-def handle_systemd():
-    '''
-    If we can't use systemd, we need to suppress systemd-specific linting
-    '''
-    reason = is_missing_systemd()
-    from . import common
-    if reason is not None:
-        common.VERIFY_UNITS = False
-    try:
-        yield
-    finally:
-        common.VERIFY_UNITS = True
 
 
 class MonitorHelper:

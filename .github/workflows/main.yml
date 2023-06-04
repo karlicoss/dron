@@ -46,8 +46,7 @@ jobs:
       if: ${{ github.event_name == 'workflow_dispatch' && inputs.debug_enabled }}
 
     # explicit bash command is necessary for Windows CI runner, otherwise it thinks it's cmd...
-    # most pytest tests won't work in containers, so just running mypy
-    - run: bash .ci/run -e mypy
+    - run: bash .ci/run
 
     - if: matrix.platform == 'ubuntu-latest'  # no need to compute coverage for other platforms
       uses: actions/upload-artifact@v3

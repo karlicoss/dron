@@ -48,6 +48,10 @@ def verify_units(pre_units: list[tuple[UnitName, Body]]) -> None:
     if not VERIFY_UNITS:
         return
 
+    if len(pre_units) == 0:
+        # otherwise systemd analayser would complain if we pass zero units
+        return
+
     if not IS_SYSTEMD:
         for unit_name, body in pre_units:
             launchd.verify_unit(unit_name=unit_name, body=body)
@@ -419,8 +423,10 @@ def lint(tabfile: Path) -> Iterator[Union[Exception, State]]:
     yield state
 
 
-def test_do_lint(tmp_path, handle_systemd):
+def test_do_lint(tmp_path: Path) -> None:
     import pytest
+
+
     def ok(body: str):
         tpath = Path(tmp_path) / 'drontab'
         tpath.write_text(body)
@@ -448,16 +454,18 @@ from dron import job
 def jobs():
     yield job(
         'hourly',
-        '/bin/echo 123',
+        ['/bin/echo', '123'],
         unit_name='unit_test',
     )
 ''')
 
-    example = _drontab_example()
-    # ugh. some hackery to make it find the executable..
-    echo = " '/bin/echo"
-    example = example.replace(" 'linkchecker", echo).replace(" '/home/user/scripts/run-borg", echo).replace(" 'ping", " '/bin/ping")
-    ok(body=example)
+    if IS_SYSTEMD:
+        # this test doesn't work without systemd yet, because launchd adapter doesn't support unquoted commands, at least yet..
+        example = _drontab_example()
+        # ugh. some hackery to make it find the executable..
+        echo = " '/bin/echo"
+        example = example.replace(" 'linkchecker", echo).replace(" '/home/user/scripts/run-borg", echo).replace(" 'ping", " '/bin/ping")
+        ok(body=example)
 
 
 def do_lint(tabfile: Path) -> State:
