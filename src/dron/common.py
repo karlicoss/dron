@@ -85,7 +85,7 @@ def is_managed(body: str) -> bool:
 pytest_fixture: Any
 under_pytest = 'pytest' in sys.modules
 if under_pytest:
-    import pytest # type: ignore
+    import pytest
     pytest_fixture = pytest.fixture
 else:
     pytest_fixture = lambda f: f # no-op otherwise to prevent pytest import

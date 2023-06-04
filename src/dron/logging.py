@@ -90,7 +90,7 @@ class LazyLogger(logging.Logger):
                 setattr(logger, att, True)
             return orig(*args, **kwargs)
 
-        logger.isEnabledFor = isEnabledFor_lazyinit  # type: ignore[assignment]
+        logger.isEnabledFor = isEnabledFor_lazyinit  # type: ignore[method-assign]
         return logger  # type: ignore[return-value]
 
 

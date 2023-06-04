@@ -1,12 +1,13 @@
 # see https://github.com/karlicoss/pymplate for up-to-date reference
 
 
-from setuptools import setup, find_namespace_packages # type: ignore
+from setuptools import setup, find_namespace_packages  # type: ignore
 
 
 def main() -> None:
-    pkg = 'dron'
-    subpkgs = find_namespace_packages('.', include=('dron.*',))
+    # works with both ordinary and namespace packages
+    pkgs = find_namespace_packages('src')
+    pkg = min(pkgs) # lexicographically smallest is the correct one usually?
     setup(
         name=pkg,
         use_scm_version={
@@ -19,7 +20,8 @@ def main() -> None:
         # https://mypy.readthedocs.io/en/stable/installed_packages.html#making-pep-561-compatible-packages
         zip_safe=False,
 
-        packages=[pkg, *subpkgs],
+        packages=pkgs,
+        package_dir={'': 'src'},
         # necessary so that package works with mypy
         package_data={pkg: ['py.typed']},
 
