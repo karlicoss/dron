@@ -23,7 +23,7 @@ import dron; return dron.make_parser().epilog
 * What does it do?
 In short, you type ~dron edit~ and edit your config file, similarly to ~crontab -e~:
 
-: from dron import job
+: from dron.api import job
 :
 : # at the moment you're expected to define jobs() function that yields jobs
 : # in the future I might add more mechanisms

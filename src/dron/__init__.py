@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+from __future__ import annotations
+
 import argparse
 from collections import OrderedDict
 from difflib import unified_diff
@@ -16,22 +18,20 @@ from typing import NamedTuple, Union, Optional, Iterator, Iterable, Any, Set
 import click
 
 
-from .api import *
-
-
+from .api import Job
 from .common import (
     IS_SYSTEMD,
     logger,
     unwrap,
     MANAGED_MARKER,
-    PathIsh,
     Unit, Body, UnitFile,
     VERIFY_UNITS,
+    UnitState, State,
+    ALWAYS,
 )
 from . import launchd
 from . import systemd
 from .systemd import _systemctl
-from .launchd import _launchctl
 
 
 # todo appdirs?
@@ -79,9 +79,6 @@ def _daemon_reload() -> None:
         pass
 
 
-from .common import UnitState, State
-
-
 def managed_units(*, with_body: bool) -> State:
     if IS_SYSTEMD:
         yield from systemd.systemd_state(with_body=with_body)
@@ -89,7 +86,6 @@ def managed_units(*, with_body: bool) -> State:
         yield from launchd.launchd_state(with_body=with_body)
 
 
-from .common import ALWAYS
 def make_state(jobs: Iterable[Job]) -> State:
     pre_units = []
     names: Set[Unit] = set()
@@ -161,8 +157,6 @@ def compute_plan(*, current: State, pending: State) -> Plan:
 
     units = [c for c in currentd if c not in pendingd] + list(pendingd.keys())
     for u in units:
-        unit = u.name # TODO ??
-
         in_cur = u in currentd
         in_pen = u in pendingd
         if in_cur:
@@ -206,7 +200,7 @@ def apply_state(pending: State) -> None:
             raise AssertionError("Can't happen", a)
 
     if len(deletes) == len(current) and len(deletes) > 0:
-        msg = f"Trying to delete all managed jobs"
+        msg = "Trying to delete all managed jobs"
         if click.confirm(f'{msg}. Are you sure?', default=False):
             pass
         else:
@@ -305,7 +299,7 @@ def cmd_edit() -> None:
         if click.confirm(f"tabfile {drontab} doesn't exist. Create?", default=True):
             drontab.write_text('''
 #!/usr/bin/env python3
-from dron import job
+from dron.api import job
 
 def jobs():
     # yield job(
@@ -427,12 +421,12 @@ def test_do_lint(tmp_path: Path) -> None:
     import pytest
 
 
-    def ok(body: str):
+    def ok(body: str) -> None:
         tpath = Path(tmp_path) / 'drontab'
         tpath.write_text(body)
         do_lint(tabfile=tpath)
 
-    def fails(body: str):
+    def fails(body: str) -> None:
         with pytest.raises(Exception):
             ok(body)
 
@@ -450,7 +444,7 @@ def jobs():
 ''')
 
     ok(body='''
-from dron import job
+from dron.api import job
 def jobs():
     yield job(
         'hourly',
@@ -535,9 +529,9 @@ def cmd_past(unit: Unit) -> None:
 
 
 # TODO test it and also on Circle?
-def _drontab_example():
+def _drontab_example() -> str:
     return '''
-from dron import job
+from dron.api import job
 
 # at the moment you're expected to define jobs() function that yields jobs
 # in the future I might add more mechanisms
@@ -571,8 +565,7 @@ def jobs():
 
 def make_parser() -> argparse.ArgumentParser:
     from .common import VerifyOff
-    def add_verify(p):
-        # ugh. might be broken on bionic :(
+    def add_verify(p: argparse.ArgumentParser) -> None:
         # specify in readme???
         # would be nice to use external checker..
         # https://github.com/systemd/systemd/issues/8072 
@@ -644,12 +637,12 @@ def main() -> None:
     args = p.parse_args()
 
 
-    marker = args.marker
+    marker: str | None = args.marker
     if marker is not None:
         global MANAGED_MARKER
         MANAGED_MARKER = marker
 
-    mode = args.mode
+    mode: str = args.mode
 
     def tabfile_or_default() -> Path:
         tabfile = args.tabfile

@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 from datetime import timedelta
 import itertools
 import json
@@ -5,15 +7,18 @@ import os
 from pathlib import Path
 import re
 import shlex
-import sys
 from subprocess import check_output, Popen, PIPE, check_call
+import sys
 from tempfile import TemporaryDirectory
 import textwrap
 from typing import Sequence, Optional, Iterator, Any
 
 
+from .api import (
+    When, OnCalendar,
+    OnFailureAction,
+)
 from .common import (
-    PathIsh,
     Unit, Body, UnitFile,
     ALWAYS,
     Command,
@@ -23,10 +28,6 @@ from .common import (
     LaunchdUnitState,
     unwrap,
     MANAGED_MARKER,
-)
-from .api import (
-    When, OnCalendar,
-    OnFailureAction,
 )
 
 
@@ -39,7 +40,7 @@ _LAUNCHD_DOMAIN = f'gui/{os.getuid()}'
 DRON_PREFIX = 'dron.'
 
 
-def _launchctl(*args):
+def _launchctl(*args: Path | str) -> list[Path | str]:
     return ['launchctl', *args]
 
 
@@ -230,7 +231,7 @@ def launchd_state(with_body: bool) -> Iterator[LaunchdUnitState]:
             continue
         elif line == '}':
             # end of job description group
-            path = extras.get('path')
+            path: str | None = extras.get('path')
             if path is not None and 'dron' in path:
                 # otherwsie likely some sort of system unit
                 unit_file = Path(path)

@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 from datetime import datetime, timedelta
 from functools import lru_cache
 from itertools import groupby
@@ -12,11 +14,9 @@ from typing import Optional, Iterator, Any, Sequence
 
 from .common import (
     IS_SYSTEMD,
-    PathIsh,
     Unit, Body,
     UnitState, State,
     MANAGED_MARKER, is_managed,
-    pytest_fixture,
     Command,
     TimerSpec,
     logger,
@@ -34,7 +34,7 @@ def is_missing_systemd() -> Optional[str]:
     return None
 
 
-def _systemctl(*args):
+def _systemctl(*args: Path | str) -> list[Path | str]:
     return ['systemctl', '--user', *args]
 
 
@@ -164,12 +164,12 @@ def test_verify_systemd() -> None:
     skip_if_no_systemd()
     from . import verify_unit
 
-    def fails(body: str):
+    def fails(body: str) -> None:
         import pytest
         with pytest.raises(Exception):
             verify_unit(unit_name='whatever.service', body=body)
 
-    def ok(body):
+    def ok(body: str) -> None:
         verify_unit(unit_name='ok.service', body=body)
 
     ok(body='''
@@ -265,7 +265,7 @@ def skip_if_no_systemd() -> None:
 
 
 class MonitorHelper:
-    def __init__(self):
+    def __init__(self) -> None:
         import pytz
         self.utc = pytz.utc
         self.utcmax = self.utc.localize(datetime.max)

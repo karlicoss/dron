@@ -2,7 +2,7 @@ import pytest
 
 
 @pytest.fixture(scope='session', autouse=True)
-def disable_verify_units_if_no_systemd(request):
+def disable_verify_units_if_no_systemd():
     '''
     If we can't use systemd, we need to suppress systemd-specific linting
     '''
