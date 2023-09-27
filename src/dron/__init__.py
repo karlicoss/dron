@@ -6,17 +6,16 @@ from collections import OrderedDict
 from difflib import unified_diff
 from itertools import tee
 import os
-import sys
 from pathlib import Path
+from pprint import pprint
 import shlex
 import shutil
 from subprocess import check_call, run
+import sys
 from tempfile import TemporaryDirectory
 from typing import NamedTuple, Union, Optional, Iterator, Iterable, Any, Set
 
-
 import click
-
 
 from .api import Job
 from .common import (
@@ -629,6 +628,7 @@ I elaborate on what led me to implement it and motivation [[https://beepb00p.xyz
     up = sp.add_parser('uninstall', help="Uninstall all managed jobs")
     add_verify(up)
 
+    dp = sp.add_parser('debug', help='Print some debug info')
     return p
 
 
@@ -672,6 +672,10 @@ def main() -> None:
                 with_command=args.command,
             )
             cmd_monitor(params)
+    elif mode == 'debug':
+        managed = managed_units(with_body=False)  # TODO not sure about body
+        for x in managed:
+            pprint(x, stream=sys.stderr)
     elif mode == 'past':
         cmd_past(unit=args.unit)
     elif mode == 'edit':
