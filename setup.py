@@ -44,6 +44,9 @@ def main() -> None:
             ],
             'testing': ['pytest'],
             'linting': ['pytest', 'mypy', 'lxml'], # lxml for mypy coverage report
+            # NOTE: need ntfy[telegram] for telegram notifications
+            # in addition, after that need to force install python-telegram-bot<20.0, otherwise it breaks 
+            # see https://github.com/rahiel/telegram-send/issues/115#issuecomment-1368728425
         },
 
         entry_points={'console_scripts': ['dron = dron:main']},

@@ -1,4 +1,5 @@
 import getpass
+import sys
 from typing import NamedTuple, Optional, Sequence
 
 from .common import (
@@ -22,8 +23,7 @@ class Job(NamedTuple):
 
 # staticmethod isn't callable directly prior to 3.10
 def _email(to: str) -> str:
-    # TODO need to use sys.executable?
-    return f'python3 -m dron.notify.email --job %n --to {to}'
+    return f'{sys.executable} -m dron.notify.email --job %n --to {to}'
 
 
 class notify:
@@ -34,9 +34,9 @@ class notify:
     email_local = _email(to='%u' if IS_SYSTEMD else getpass.getuser())
 
     # TODO adapt to macos
-    desktop_notification = 'python3 -m dron.notify.ntfy_desktop --job %n'
+    desktop_notification = f'{sys.executable} -m dron.notify.ntfy_desktop --job %n'
 
-    telegram = 'python3 -m dron.notify.ntfy_telegram --job %n'
+    telegram = f'{sys.executable} -m dron.notify.ntfy_telegram --job %n'
 
 
 def job(when: Optional[When], command: Command, *, unit_name: str, on_failure: Sequence[OnFailureAction]=(notify.email_local,), **kwargs) -> Job:
