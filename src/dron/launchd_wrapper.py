@@ -67,12 +67,18 @@ def main() -> NoReturn:
         logger.info(line.decode('utf8').rstrip('\n'))  # meh
 
     for notify_cmd in notify_cmds:
+        logger.info(f'notifying: {notify_cmd}')
         try:
-            with Popen(notify_cmd, shell=True, stdin=PIPE) as po:
+            with Popen(notify_cmd, shell=True, stdin=PIPE, stdout=PIPE, stderr=PIPE) as po:
                 sin = po.stdin
                 assert sin is not None
                 for line in payload():
                     sin.write(line)
+                (sout, serr) = po.communicate()
+                for l in sout.decode('utf8').splitlines():
+                    logger.debug(l)
+                for l in serr.decode('utf8').splitlines():
+                    logger.debug(l)
             assert po.poll() == 0, notify_cmd
         except Exception as e:
             logger.error(f'notificaiton failed: {notify_cmd}')
