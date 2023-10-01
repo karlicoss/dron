@@ -527,6 +527,13 @@ def cmd_past(unit: Unit) -> None:
         return launchd.cmd_past(unit)
 
 
+def cmd_run(unit: Unit) -> None:
+    if IS_SYSTEMD:
+        raise NotImplementedError
+    else:
+        return launchd.cmd_run(unit)
+
+
 # TODO test it and also on Circle?
 def _drontab_example() -> str:
     return '''
@@ -613,9 +620,11 @@ I elaborate on what led me to implement it and motivation [[https://beepb00p.xyz
     mp.add_argument('--once'   , action='store_true', help='only call once')
     mp.add_argument('--rate'   , action='store_true', help='Display success rate (unstable and potentially slow)')
     mp.add_argument('--command', action='store_true', help='Display command')
-    pp = sp.add_parser('past', help='List past job runs')
-    pp.add_argument('unit', type=str) # TODO add shell completion?
-    ep = sp.add_parser('edit', help="Edit  drontab (like 'crontab -e')")
+
+    past_parser = sp.add_parser('past', help='List past job runs')
+    past_parser.add_argument('unit', type=str, nargs='?')  # TODO add shell completion?
+
+    ep = sp.add_parser('edit', help="Edit drontab (like 'crontab -e')")
     add_verify(ep)
     ap = sp.add_parser('apply', help="Apply drontab (like 'crontab' with no args)")
     ap.add_argument('tabfile', type=Path, nargs='?')
@@ -629,6 +638,10 @@ I elaborate on what led me to implement it and motivation [[https://beepb00p.xyz
     add_verify(up)
 
     dp = sp.add_parser('debug', help='Print some debug info')
+
+    run_parser = sp.add_parser('run', help='Run the job')
+    run_parser.add_argument('unit', type=str, nargs='?')  # TODO add shell completion?
+
     return p
 
 
@@ -649,6 +662,24 @@ def main() -> None:
         if tabfile is None:
             tabfile = DRONTAB
         return tabfile
+
+
+    def prompt_for_unit() -> UnitName:
+        from prompt_toolkit import PromptSession
+        from prompt_toolkit.completion import WordCompleter
+        # TODO print options
+        managed = list(managed_units(with_body=False))
+        units = [x.unit_file.stem for x in managed]
+
+        print('Units under dron:', file=sys.stderr)
+        for u in units:
+            print(f'- {u}', file=sys.stderr)
+
+        completer = WordCompleter(units, ignore_case=True)
+        session = PromptSession("Select a unit: ", completer=completer)
+        selected = session.prompt()
+        return selected
+
 
     if mode == 'monitor':
         # TODO hacky...
@@ -677,7 +708,11 @@ def main() -> None:
         for x in managed:
             pprint(x, stream=sys.stderr)
     elif mode == 'past':
-        cmd_past(unit=args.unit)
+        unit = args.unit if args.unit is not None else prompt_for_unit()
+        cmd_past(unit=unit)
+    elif mode == 'run':
+        unit = args.unit if args.unit is not None else prompt_for_unit()
+        cmd_run(unit=unit)
     elif mode == 'edit':
         cmd_edit()
     elif mode == 'lint':
