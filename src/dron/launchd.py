@@ -260,7 +260,8 @@ def launchd_state(with_body: bool) -> Iterator[LaunchdUnitState]:
                     unit_file=Path(path),
                     body=body,
                     cmdline=tuple(extras['arguments']),
-                    last_exit_code=extras['last exit code'],
+                    # might not be present when we killed process manually?
+                    last_exit_code=extras.get('last exit code'),
                     # pid might not be present (presumably when it's not running)
                     pid=extras.get('pid'),
                     schedule=schedule,

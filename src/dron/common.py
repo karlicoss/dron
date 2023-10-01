@@ -38,7 +38,7 @@ class UnitState:
 class LaunchdUnitState(UnitState):
     cmdline: Sequence[str]
     # NOTE: can legit be str (e.g. if unit was never ran before)
-    last_exit_code: str
+    last_exit_code: Optional[str]
     pid: Optional[str]
     schedule: Optional[str]
 
