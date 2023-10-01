@@ -32,6 +32,7 @@ def main() -> None:
             'termcolor'     ,  # for monitor
 
             'mypy'          ,  # for checking units
+            'loguru'        ,  # nicer logging
 
             # vvv example of git repo dependency
             # 'repo @ git+https://github.com/karlicoss/repo.git',
