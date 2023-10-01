@@ -26,11 +26,12 @@ def main() -> None:
         package_data={pkg: ['py.typed']},
 
         install_requires=[
-            'click',       # CLI interactions
-            'tabulate'   , # for monitor
-            'termcolor'  , # for monitor
+            'click'         ,  # CLI
+            'prompt_toolkit',  # CLI
+            'tabulate'      ,  # for monitor
+            'termcolor'     ,  # for monitor
 
-            'mypy'       , # for checking units
+            'mypy'          ,  # for checking units
 
             # vvv example of git repo dependency
             # 'repo @ git+https://github.com/karlicoss/repo.git',

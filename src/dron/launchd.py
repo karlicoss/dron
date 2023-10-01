@@ -72,6 +72,10 @@ def launchctl_unload(*, unit: Unit) -> None:
     _launch_agent(unit + '.plist').unlink()
 
 
+def launchctl_kickstart(*, unit: Unit) -> None:
+    check_call(_launchctl('kickstart', fqn(unit)))
+
+
 def launchctl_reload(*, unit: Unit, unit_file: UnitFile) -> None:
     # don't think there is a better way?
     launchctl_unload(unit=unit)
@@ -332,6 +336,10 @@ def cmd_past(unit: Unit) -> None:
                 continue
             ts  = j['timestamp']
             print(ts, sub, msg)
+
+
+def cmd_run(unit: Unit) -> None:
+    return launchctl_kickstart(unit=unit)
 
 
 def _cmd_monitor(managed: State, *, params: MonParams) -> None:
