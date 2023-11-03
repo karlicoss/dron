@@ -113,7 +113,11 @@ def make_state(jobs: Iterable[Job]) -> State:
     verify_units(pre_units)
 
     for unit_file, body in pre_units:
-        yield UnitState(unit_file=DRON_UNITS_DIR / unit_file, body=body)
+        yield UnitState(
+            unit_file=DRON_UNITS_DIR / unit_file,
+            body=body,
+            cmdline=None,  # ugh, a bit crap, but from this code path cmdline doesn't matter
+        )
 
 
 # TODO bleh. too verbose..
@@ -528,10 +532,11 @@ def cmd_past(unit: Unit) -> None:
         return launchd.cmd_past(unit)
 
 
-def cmd_run(unit: Unit) -> None:
+def cmd_run(*, unit: Unit, exec: bool) -> None:
     if IS_SYSTEMD:
-        raise NotImplementedError
+        return systemd.cmd_run(unit=unit, exec=exec)
     else:
+        assert not exec  # support later
         return launchd.cmd_run(unit)
 
 
@@ -640,8 +645,9 @@ I elaborate on what led me to implement it and motivation [[https://beepb00p.xyz
 
     dp = sp.add_parser('debug', help='Print some debug info')
 
-    run_parser = sp.add_parser('run', help='Run the job')
+    run_parser = sp.add_parser('run', help='Run the job right now, ignoring the timer')
     run_parser.add_argument('unit', type=str, nargs='?')  # TODO add shell completion?
+    run_parser.add_argument('--exec', action='store_true', help='Run directly, not via systemd/launchd')
 
     return p
 
@@ -713,7 +719,8 @@ def main() -> None:
         cmd_past(unit=unit)
     elif mode == 'run':
         unit = args.unit if args.unit is not None else prompt_for_unit()
-        cmd_run(unit=unit)
+        exec = args.exec
+        cmd_run(unit=unit, exec=exec)
     elif mode == 'edit':
         cmd_edit()
     elif mode == 'lint':
