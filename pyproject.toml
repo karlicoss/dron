@@ -36,6 +36,11 @@ testing = [
     "mypy",
     "lxml",  # for mypy html coverage
 ]
+notify-telegram = [
+    # version before that had a bug that prevented it from working
+    # see https://github.com/rahiel/telegram-send/issues/115#issuecomment-1368728425
+    "telegram-send>=0.37",
+]
 
 
 [build-system]

@@ -1,0 +1,35 @@
+"""
+uses telegram-send for Telegram notifications
+make sure to run "telegram-send --configure" beforehand!
+"""
+import asyncio
+import logging
+import socket
+import sys
+
+from .common import get_parser
+
+
+def send(*, message: str) -> None:
+    import telegram_send  # type: ignore[import-untyped]
+    asyncio.run(telegram_send.send(messages=[message]))
+
+def main() -> None:
+    p = get_parser()
+    args = p.parse_args()
+
+    job: str = args.job
+
+    # TODO include some log?
+    body = f'dron[{socket.gethostname()}]: {job} failed'
+
+    try:
+        send(message=body)
+    except Exception as e:
+        logging.exception(e)
+        # TODO fallback on email?
+        sys.exit(1)
+    sys.exit(0)
+
+if __name__ == '__main__':
+    main()
