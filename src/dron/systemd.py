@@ -239,6 +239,11 @@ class BusManager:
     def prop(obj, schema: str, name: str):
         return obj.Get(_sd(schema), name)
 
+    @classmethod
+    def exec_start(cls, props) -> Sequence[str]:
+        dbus_exec_start = cls.prop(props, '.Service', 'ExecStart')
+        return [str(x) for x in dbus_exec_start[0][1]]
+
 
 def systemd_state(*, with_body: bool) -> State:
     bus = BusManager()
@@ -252,10 +257,20 @@ def systemd_state(*, with_body: bool) -> State:
 
         # todo annoying, this call still takes some time... but whatever ok
         props = bus.properties(name)
+
+        # useful for debugging, can also use .Service if it's not a timer
+        # all_properties = props.GetAll(_sd('.Unit'))
+
         # stale = int(bus.prop(props, '.Unit', 'NeedDaemonReload')) == 1
         unit_file = Path(str(bus.prop(props, '.Unit', 'FragmentPath'))).resolve()
         body = unit_file.read_text() if with_body else None
-        yield UnitState(unit_file=unit_file, body=body)
+        cmdline: Optional[Sequence[str]]
+        if '.timer' in name: # meh
+            cmdline = None
+        else:
+            cmdline = BusManager.exec_start(props)
+
+        yield UnitState(unit_file=unit_file, body=body, cmdline=cmdline)
 
 
 def test_managed_units() -> None:
@@ -398,9 +413,10 @@ def _cmd_monitor(managed: State, *, params: MonParams):
         props = bus.properties(service)
         # TODO some summary too? e.g. how often in failed
         # TODO make defensive?
-        exec_start = bus.prop(props, '.Service', 'ExecStart')
-        result     = bus.prop(props, '.Service', 'Result')
-        command =  ' '.join(map(shlex.quote, exec_start[0][1])) if params.with_command else None
+        result = bus.prop(props, '.Service', 'Result')
+        exec_start = BusManager.exec_start(props)
+        assert exec_start is not None, service  # not None for services
+        command = ' '.join(map(shlex.quote, exec_start)) if params.with_command else None
         _pid: Optional[int] = int(bus.prop(props, '.Service', 'MainPID'))
         pid  = None if _pid == 0 else str(_pid)
 
@@ -471,6 +487,28 @@ def cmd_past(unit: Unit) -> None:
         ts = mon.from_usec(j['__REALTIME_TIMESTAMP'])
         msg = j['MESSAGE']
         print(ts.isoformat(), msg)
+
+
+def cmd_run(*, unit: Unit, exec: bool) -> None:
+    assert exec  # support without exec later
+    # TODO we might have called it before via managed_units.. maybe need to cache
+    states = []
+    for s in systemd_state(with_body=False):
+        # meh
+        unit_name = s.unit_file.name
+        if unit_name.endswith('.timer'):
+            continue
+        if s.unit_file.stem == unit:
+            states.append(s)
+    [state] = states
+    cmdline = state.cmdline
+    assert cmdline is not None
+    cmds = ' '.join(map(shlex.quote, cmdline))
+    logger.info(f'running: {cmds}')
+    os.execvp(
+        cmdline[0],
+        list(cmdline),
+    )
 
 
 # used to use this, keeping for now just for the refernce

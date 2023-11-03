@@ -36,11 +36,11 @@ UnitFile = Path
 class UnitState:
     unit_file: UnitFile
     body: Optional[Body]
+    cmdline: Optional[Sequence[str]]  # can be None for timers
 
 
 @dataclass
 class LaunchdUnitState(UnitState):
-    cmdline: Sequence[str]
     # NOTE: can legit be str (e.g. if unit was never ran before)
     last_exit_code: Optional[str]
     pid: Optional[str]

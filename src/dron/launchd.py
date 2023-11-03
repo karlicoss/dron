@@ -367,7 +367,9 @@ def _cmd_monitor(managed: State, *, params: MonParams) -> None:
         schedule = ss
         command = None
         if params.with_command:
-            command = ' '.join(map(shlex.quote, s.cmdline))
+            cmdline = s.cmdline
+            assert cmdline is not None, name  # not None for launchd units
+            command = ' '.join(map(shlex.quote, cmdline))
             command = remove_launchd_wrapper(command)
 
         status_ok = s.last_exit_code == '0'
