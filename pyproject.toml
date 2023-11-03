@@ -1,0 +1,48 @@
+# see https://github.com/karlicoss/pymplate for up-to-date reference
+[project]
+dynamic = ["version"]  # version is managed by setuptools_scm
+name = "dron"
+dependencies = [
+    "click"         ,  # CLI
+    "prompt_toolkit",  # CLI
+    "tabulate"      ,  # for monitor
+    "termcolor"     ,  # for monitor
+    "mypy"          ,  # for checking units
+    "loguru"        ,  # nicer logging
+    "dbus-python; platform_system != 'Darwin'",  # dbus interface to systemd
+]
+# FIXME dbus
+
+## these need to be set if you're planning to upload to pypi
+# description = "TODO"
+# license = {file = "LICENSE"}
+# authors = [
+#     {name = "Dima Gerasimov (@karlicoss)", email = "karlicoss@gmail.com"},
+# ]
+# maintainers = [
+#     {name = "Dima Gerasimov (@karlicoss)", email = "karlicoss@gmail.com"},
+# ]
+#
+# [project.urls]
+# Homepage = "https://github.com/karlicoss/pymplate"
+##
+[project.scripts]
+dron = "dron:main"
+
+[project.optional-dependencies]
+testing = [
+    "pytest",
+    "ruff",
+    "mypy",
+    "lxml",  # for mypy html coverage
+]
+
+
+[build-system]
+requires = ["setuptools", "setuptools-scm"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools_scm]
+version_scheme = "python-simplified-semver"
+local_scheme = "dirty-tag"
+
