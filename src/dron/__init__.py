@@ -676,7 +676,7 @@ def main() -> None:
             print(f'- {u}', file=sys.stderr)
 
         completer = WordCompleter(units, ignore_case=True)
-        session = PromptSession("Select a unit: ", completer=completer)
+        session = PromptSession("Select a unit: ", completer=completer)  # type: ignore[var-annotated]
         selected = session.prompt()
         return selected
 

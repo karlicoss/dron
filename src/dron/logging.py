@@ -60,7 +60,7 @@ DATEFMT = '%Y-%m-%d %H:%M:%S'
 def setup_logger(logger: logging.Logger, level: LevelIsh) -> None:
     lvl = mklevel(level)
     try:
-        import logzero  # type: ignore[import]
+        import logzero  # type: ignore[import-not-found]
     except ModuleNotFoundError:
         import warnings
 
