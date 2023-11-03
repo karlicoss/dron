@@ -222,7 +222,8 @@ def _sd(s: str) -> str:
 
 class BusManager:
     def __init__(self) -> None:
-        from dbus import SessionBus, Interface  # type: ignore[import]
+        # unused-ignore because on macos there is no dbus (but this code is still running mypy on CI)
+        from dbus import SessionBus, Interface  # type: ignore[import-untyped,import-not-found,unused-ignore]
         self.Interface = Interface  # meh
 
         self.bus = SessionBus()  # note: SystemBus is for system-wide services
