@@ -94,7 +94,7 @@ def launchd_wrapper(*, job: str, on_failure: list[str]) -> list[str]:
 
 
 def remove_launchd_wrapper(cmd: str) -> str:
-    if not ' dron.launchd_wrapper ' in cmd:
+    if ' dron.launchd_wrapper ' not in cmd:
         return cmd
     # uhh... not super reliable, but this is only used for monitor so hopefully fine
     [_, cmd] = cmd.split(' -- ', maxsplit=1)

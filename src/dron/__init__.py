@@ -65,7 +65,7 @@ def verify_unit(*, unit_name: UnitName, body: Body) -> None:
 def write_unit(*, unit: Unit, body: Body, prefix: Path=DRON_UNITS_DIR) -> None:
     unit_file = prefix / unit
 
-    logger.info('writing unit file: %s', unit_file)
+    logger.info(f'writing unit file: {unit_file}')
     verify_unit(unit_name=unit_file.name, body=body)
     unit_file.write_text(body)
 
@@ -221,10 +221,10 @@ def apply_state(pending: State) -> None:
             updates.append((u, diff))
 
     # TODO list unit names here?
-    logger.info('no change: %d', len(nochange))
-    logger.info('disabling: %d', len(deletes))
-    logger.info('updating : %d', len(updates))
-    logger.info('adding   : %d', len(adds))
+    logger.info(f'no change: {len(nochange)}')
+    logger.info(f'disabling: {len(deletes)}')
+    logger.info(f'updating : {len(updates)}')
+    logger.info(f'adding   : {len(adds)}')
 
     for a in deletes:
         if IS_SYSTEMD:
@@ -240,7 +240,7 @@ def apply_state(pending: State) -> None:
     for (u, diff) in updates:
         unit = u.unit
         unit_file = u.unit_file
-        logger.info('updating %s', unit)
+        logger.info(f'updating {unit}')
         for d in diff:
             sys.stderr.write(d)
         write_unit(unit=u.unit, body=u.new_body)
@@ -259,7 +259,7 @@ def apply_state(pending: State) -> None:
             check_call(_systemctl('restart', u.unit))
 
     for a in adds:
-        logger.info('adding %s', a.unit_file)
+        logger.info(f'adding {a.unit_file}')
         # TODO when we add, assert that previous unit wasn't managed? otherwise we overwrite something
         write_unit(unit=a.unit, body=a.body)
 
@@ -269,7 +269,7 @@ def apply_state(pending: State) -> None:
     for a in adds:
         unit_file = a.unit_file
         unit = unit_file.name
-        logger.info('enabling %s', unit)
+        logger.info(f'enabling {unit}')
         if unit.endswith('.service'):
             # quiet here because it warns that "The unit files have no installation config"
             # TODO maybe add [Install] section? dunno
@@ -349,7 +349,7 @@ def jobs():
                     raise ex
             else:
                 drontab.write_text(tpath.read_text()) # handles symlinks correctly
-                logger.info("Wrote changes to %s. Don't forget to commit!", drontab)
+                logger.info(f"Wrote changes to {drontab}. Don't forget to commit!")
                 break
 
         # TODO show git diff?
@@ -380,7 +380,8 @@ def lint(tabfile: Path) -> Iterator[Union[Exception, State]]:
 
     errors = []
     for l in linters:
-        logger.info('Running: %s', ' '.join(map(shlex.quote, l)))
+        scmd = ' '.join(map(shlex.quote, l))
+        logger.info(f'Running: {scmd}')
         with TemporaryDirectory() as td:
             env = {**os.environ}
             env = extra_path('MYPYPATH'  , dtab_dir, env)
@@ -390,7 +391,7 @@ def lint(tabfile: Path) -> Iterator[Union[Exception, State]]:
             logger.info('OK')
             continue
         else:
-            logger.error('FAIL: code: %d', r.returncode)
+            logger.error(f'FAIL: code: {r.returncode}')
             errors.append('error')
     if len(errors) > 0:
         yield RuntimeError('Python linting failed!')
@@ -731,7 +732,7 @@ def jobs():
 ''')
             cmd_apply(empty)
     else:
-        logger.error('Unknown mode: %s', mode)
+        logger.error(f'Unknown mode: {mode}')
         p.print_usage(sys.stderr)
         sys.exit(1)
     # TODO need self install..

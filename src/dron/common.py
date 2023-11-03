@@ -5,6 +5,10 @@ import shlex
 import sys
 from typing import NamedTuple, Iterable, Optional, Sequence, Union, Dict, Any
 
+import loguru
+
+from loguru import logger
+
 
 # TODO can remove this? although might be useful for tests
 VERIFY_UNITS = True
@@ -46,8 +50,6 @@ class LaunchdUnitState(UnitState):
 State = Iterable[UnitState]
 
 
-from .logging import LazyLogger
-logger = LazyLogger('dron')
 
 
 import platform
