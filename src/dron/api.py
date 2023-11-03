@@ -36,7 +36,7 @@ class notify:
     # TODO adapt to macos
     desktop_notification = f'{sys.executable} -m dron.notify.ntfy_desktop --job %n'
 
-    telegram = f'{sys.executable} -m dron.notify.ntfy_telegram --job %n'
+    telegram = f'{sys.executable} -m dron.notify.telegram --job %n'
 
 
 def job(when: Optional[When], command: Command, *, unit_name: str, on_failure: Sequence[OnFailureAction]=(notify.email_local,), **kwargs) -> Job:
