@@ -360,7 +360,7 @@ def _cmd_monitor(managed: State, *, params: MonParams):
 
             last_dt = mon.from_usec(last)
             next_dt = mon.from_usec(next_)
-            nexts = next_dt.astimezone(mon.local_tz).replace(tzinfo=None, microsecond=0).isoformat() # type: ignore[arg-type]
+            nexts = next_dt.astimezone(mon.local_tz).replace(tzinfo=None, microsecond=0).isoformat()
 
             if next_dt == datetime.max:
                 left_delta = timedelta(0)
