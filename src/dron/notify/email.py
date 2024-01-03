@@ -1,11 +1,9 @@
 #!/usr/bin/env python3
-import shlex
 import socket
-from subprocess import Popen, PIPE, STDOUT
-import sys
+from subprocess import Popen, PIPE
 from typing import Iterator
 
-from .common import get_parser
+from .common import get_parser, get_last_systemd_log, get_stdin
 
 
 def send_payload(payload: Iterator[bytes]) -> None:
@@ -17,25 +15,6 @@ def send_payload(payload: Iterator[bytes]) -> None:
         stdin.flush()
     rc = po.poll()
     assert rc == 0, rc
-
-
-def get_last_systemd_log(job: str) -> Iterator[bytes]:
-    inf = '1000000'
-    cmd = ['systemctl', '--user', 'status', '--no-pager', '--lines', inf, job, '-o', 'cat']
-    yield ' '.join(map(shlex.quote, cmd)).encode('utf8') + b'\n\n'
-    with Popen(cmd, stdout=PIPE, stderr=STDOUT) as po:
-        out = po.stdout
-        assert out is not None
-        yield from out
-    rc = po.poll()
-    assert rc in {
-        0,
-        3,  # 3 means failure due to job exit code
-    }, rc
-
-
-def get_stdin() -> Iterator[bytes]:
-    yield from sys.stdin.buffer
 
 
 def send_email(*, to: str, job: str, stdin: bool) -> None:
