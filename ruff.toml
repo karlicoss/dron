@@ -1,4 +1,4 @@
-ignore = [
+lint.ignore = [
 ### too opinionated style checks
     "E501",  # too long lines
     "E702",  # Multiple statements on one line (semicolon)
@@ -22,8 +22,4 @@ ignore = [
     "F841",  # Local variable `count` is assigned to but never used
     "F401",  # imported but unused
 ###
-]
-
-exclude = [
-    "src/hypexport/Hypothesis",
 ]

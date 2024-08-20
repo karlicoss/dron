@@ -5,8 +5,6 @@ import shlex
 import sys
 from typing import NamedTuple, Iterable, Optional, Sequence, Union, Dict, Any
 
-import loguru
-
 from loguru import logger
 
 
