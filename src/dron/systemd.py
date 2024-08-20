@@ -126,7 +126,7 @@ Description=Service for {unit_name} {MANAGED_MARKER}
 
 def test_managed() -> None:
     skip_if_no_systemd()
-    from . import verify_unit
+    from .dron import verify_unit
 
     assert is_managed(timer(unit_name='whatever', when='daily'))
 
@@ -178,7 +178,7 @@ def verify_units(pre_units: list[tuple[Unit, Body]]) -> None:
 
 def test_verify_systemd() -> None:
     skip_if_no_systemd()
-    from . import verify_unit
+    from .dron import verify_unit
 
     def fails(body: str) -> None:
         import pytest
@@ -276,7 +276,7 @@ def systemd_state(*, with_body: bool) -> State:
 def test_managed_units() -> None:
     skip_if_no_systemd()
     # TODO wonder if i'd be able to use launchd on ci...
-    from . import managed_units, cmd_monitor
+    from .dron import managed_units, cmd_monitor
     from .common import MonParams
 
     # shouldn't fail at least

@@ -27,7 +27,7 @@ dependencies = [
 # Homepage = "https://github.com/karlicoss/pymplate"
 ##
 [project.scripts]
-dron = "dron:main"
+dron = "dron.__main__:main"
 
 [project.optional-dependencies]
 testing = [
