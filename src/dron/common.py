@@ -1,10 +1,10 @@
 import argparse
-from dataclasses import dataclass
-from datetime import datetime
-from pathlib import Path
 import shlex
 import sys
-from typing import NamedTuple, Iterable, Optional, Sequence, Union, Dict, Any
+from dataclasses import asdict, dataclass, replace
+from datetime import datetime
+from pathlib import Path
+from typing import Any, Dict, Iterable, Optional, Sequence, Union
 
 from loguru import logger
 
@@ -25,7 +25,8 @@ class VerifyOff(argparse.Action):
         VERIFY_UNITS = False
 
 
-class MonParams(NamedTuple):
+@dataclass
+class MonitorParams:
     with_success_rate: bool
     with_command: bool
 
@@ -119,7 +120,8 @@ def test_wrap() -> None:
 
 
 
-class MonitorEntry(NamedTuple):
+@dataclass(order=True)
+class MonitorEntry:
     unit: str
     status: str
     left: str
@@ -127,6 +129,12 @@ class MonitorEntry(NamedTuple):
     schedule: str
     command: Optional[str]
     pid: Optional[str]
+
+    """
+    'status' is coming from systemd/launchd, and it's a string.
+
+    So status_ok should be used instead if you actually want to rely on something robust.
+    """
     status_ok: bool
 
 
@@ -154,13 +162,15 @@ def print_monitor(entries: Iterable[MonitorEntry]) -> None:
 
     items = []
     for e in entries:
-        e = e._replace(
+        e = replace(
+            e,
             status=termcolor.colored(e.status, 'green' if e.status_ok else 'red'),
         )
         if e.pid is not None:
-            e = e._replace(
+            e = replace(
+                e,
                 next=termcolor.colored('running', 'yellow'),
                 left='--',
             )
-        items.append(e[:len(headers)])
+        items.append(list(asdict(e).values())[:len(headers)])
     print(tabulate.tabulate(items, headers=headers))

@@ -24,6 +24,8 @@ from .common import (
     datetime_aware,
     escape,
     logger,
+    MonitorParams,
+    MonitorEntry,
 )
 from .api import (
     When, OnCalendar,
@@ -279,7 +281,6 @@ def test_managed_units() -> None:
     skip_if_no_systemd()
     # TODO wonder if i'd be able to use launchd on ci...
     from .dron import managed_units, cmd_monitor
-    from .common import MonParams
 
     # shouldn't fail at least
     list(managed_units(with_body=True))
@@ -288,7 +289,7 @@ def test_managed_units() -> None:
     # dbus.exceptions.DBusException: org.freedesktop.DBus.Error.BadAddress: Address does not contain a colon
     # todo maybe don't need it anymore with 20.04 circleci?
     if 'CI' not in os.environ:
-        cmd_monitor(MonParams(with_success_rate=True, with_command=True))
+        cmd_monitor(MonitorParams(with_success_rate=True, with_command=True))
 
 
 def skip_if_no_systemd() -> None:
@@ -323,9 +324,7 @@ class MonitorHelper:
             return ZoneInfo('UTC')
 
 
-from .common import MonParams
-def _cmd_monitor(managed: State, *, params: MonParams):
-    logger.debug('starting monitor...')
+def get_entries_for_monitor(managed: State, *, params: MonitorParams) -> list[MonitorEntry]:
     # TODO reorder timers and services so timers go before?
     sd = lambda s: f'org.freedesktop.systemd1{s}'
 
@@ -335,7 +334,6 @@ def _cmd_monitor(managed: State, *, params: MonParams):
 
     bus = BusManager()
 
-    from .common import MonitorEntry, print_monitor
     entries: list[MonitorEntry] = []
     names = sorted(s.unit_file.name for s in managed)
     uname = lambda full: full.split('.')[0]
@@ -441,7 +439,7 @@ def _cmd_monitor(managed: State, *, params: MonParams):
             pid=pid,
             status_ok=status_ok,
         ))
-    print_monitor(entries)
+    return entries
 
 
 Json = dict[str, Any]

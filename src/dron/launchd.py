@@ -23,11 +23,12 @@ from .common import (
     ALWAYS,
     Command,
     logger,
-    MonParams,
+    MonitorParams,
     State,
     LaunchdUnitState,
     unwrap,
     MANAGED_MARKER,
+    MonitorEntry,
 )
 
 
@@ -343,11 +344,8 @@ def cmd_run(unit: Unit) -> None:
     return launchctl_kickstart(unit=unit)
 
 
-def _cmd_monitor(managed: State, *, params: MonParams) -> None:
+def get_entries_for_monitor(managed: State, *, params: MonitorParams) -> list[MonitorEntry]:
     # for now kinda copy pasted from systemd
-    logger.debug('starting monitor...')
-
-    from .common import MonitorEntry, print_monitor
 
     entries: list[MonitorEntry] = []
     for s in managed:
@@ -387,4 +385,4 @@ def _cmd_monitor(managed: State, *, params: MonParams) -> None:
             pid=pid,
             status_ok=status_ok,
         ))
-    print_monitor(entries)
+    return entries
