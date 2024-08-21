@@ -27,6 +27,8 @@ from .common import (
     VERIFY_UNITS,
     UnitState, State,
     ALWAYS,
+    print_monitor,
+    MonitorParams,
 )
 from . import launchd
 from . import systemd
@@ -510,19 +512,23 @@ def cmd_apply(tabfile: Path) -> None:
     apply(tabfile)
 
 
-from .common import MonParams
+get_entries_for_monitor = (
+    systemd.get_entries_for_monitor
+    if IS_SYSTEMD else
+    launchd.get_entries_for_monitor
+)
 
 
 # TODO think if it's worth integrating with timers?
-def cmd_monitor(params: MonParams) -> None:
+def cmd_monitor(params: MonitorParams) -> None:
     managed = list(managed_units(with_body=False)) # body slows down this call quite a bit
     if len(managed) == 0:
-        print('No managed units!', file=sys.stderr)
-    # TODO test it ?
-    if IS_SYSTEMD:
-        return systemd._cmd_monitor(managed, params=params)
-    else:
-        return launchd._cmd_monitor(managed, params=params)
+        logger.warning('no managed units!')
+
+    logger.debug('starting monitor...')
+
+    entries = get_entries_for_monitor(managed=managed, params=params)
+    print_monitor(entries)
 
 
 def cmd_past(unit: Unit) -> None:
@@ -622,7 +628,7 @@ I elaborate on what led me to implement it and motivation [[https://beepb00p.xyz
 
     sp = p.add_subparsers(dest='mode')
     mp = sp.add_parser('monitor', help='Monitor services/timers managed by dron')
-    mp.add_argument('-n'        ,type=int, default=1, help='-n parameter for watch')
+    mp.add_argument('-n'        ,type=int, default=1, help='refresh every n seconds')
     mp.add_argument('--once'   , action='store_true', help='only call once')
     mp.add_argument('--rate'   , action='store_true', help='Display success rate (unstable and potentially slow)')
     mp.add_argument('--command', action='store_true', help='Display command')
@@ -689,28 +695,22 @@ def main() -> None:
 
 
     if mode == 'monitor':
-        # TODO hacky...
         once = args.once
-        if not once:
-            cmd_args = sys.argv[1:] + ['--once']
-            cmd = [sys.executable, '-m', __package__, *cmd_args]
-            # hmm for some reason on OSX termcolor doesn't work under watch??
-            os.environ['FORCE_COLOR'] = 'true'
-            os.execvp(
-                'watch',
-                [
-                    'watch',
-                    '--color',
-                    '-n', str(args.n),
-                    *map(shlex.quote, cmd),
-                ],
-            )
+
+        params = MonitorParams(
+            with_success_rate=args.rate,
+            with_command=args.command,
+        )
+
+        if once:
+            # fallback on old style monitor for now?
+            # this can be quite useful for grepping etc..
+            cmd_monitor(params=params)
         else:
-            params = MonParams(
-                with_success_rate=args.rate,
-                with_command=args.command,
-            )
-            cmd_monitor(params)
+            from .monitor import MonitorApp
+            app = MonitorApp(monitor_params=params, refresh_every=args.n)
+            app.run()
+
     elif mode == 'debug':
         managed = managed_units(with_body=False)  # TODO not sure about body
         for x in managed:
