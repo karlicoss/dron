@@ -1,11 +1,16 @@
 import argparse
 from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
 import shlex
 import sys
 from typing import NamedTuple, Iterable, Optional, Sequence, Union, Dict, Any
 
 from loguru import logger
+
+
+datetime_aware = datetime
+datetime_naive = datetime
 
 
 # TODO can remove this? although might be useful for tests

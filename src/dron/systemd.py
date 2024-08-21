@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from functools import lru_cache
 from itertools import groupby
 import json
@@ -11,6 +11,7 @@ import shlex
 from subprocess import run, PIPE, Popen
 from tempfile import TemporaryDirectory
 from typing import Optional, Iterator, Any, Sequence
+from zoneinfo import ZoneInfo
 
 
 from .common import (
@@ -20,8 +21,9 @@ from .common import (
     MANAGED_MARKER, is_managed,
     Command,
     TimerSpec,
-    logger,
+    datetime_aware,
     escape,
+    logger,
 )
 from .api import (
     When, OnCalendar,
@@ -296,29 +298,29 @@ def skip_if_no_systemd() -> None:
         pytest.skip(f'No systemd: {reason}')
 
 
-class MonitorHelper:
-    def __init__(self) -> None:
-        import pytz
-        self.utc = pytz.utc
-        self.utcmax = self.utc.localize(datetime.max)
+_UTCMAX = datetime.max.replace(tzinfo=timezone.utc)
 
-    def from_usec(self, usec) -> datetime:
+
+class MonitorHelper:
+    def from_usec(self, usec) -> datetime_aware:
         u = int(usec)
         if u == 2 ** 64 - 1: # apparently systemd uses max uint64
             # happens if the job is running ATM?
-            return self.utcmax
+            return _UTCMAX
         else:
-            return self.utc.localize(datetime.utcfromtimestamp(u / 10 ** 6))
+            return datetime.fromtimestamp(u / 10 ** 6, tz=timezone.utc)
 
     @property
     @lru_cache
-    def local_tz(self):
-        # TODO warning if tzlocal isn't installed?
+    def local_tz(self) -> ZoneInfo:
         try:
+            # it's a required dependency, but still might fail in some weird environments?
+            #   e.g. if zoneinfo information isn't available
             from tzlocal import get_localzone
             return get_localzone()
-        except:
-            return self.utc
+        except Exception as e:
+            logger.error("Couldn't determine local timezone! Falling back to UTC")
+            return ZoneInfo('UTC')
 
 
 from .common import MonParams
@@ -329,7 +331,7 @@ def _cmd_monitor(managed: State, *, params: MonParams):
 
     mon = MonitorHelper()
 
-    UTCNOW = datetime.now(tz=mon.utc)
+    UTCNOW = datetime.now(tz=timezone.utc)
 
     bus = BusManager()
 
