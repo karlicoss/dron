@@ -1,9 +1,8 @@
-#!/usr/bin/env python3
 import socket
-from subprocess import Popen, PIPE
+from subprocess import PIPE, Popen
 from typing import Iterator
 
-from .common import get_parser, get_last_systemd_log, get_stdin
+from .common import get_last_systemd_log, get_parser, get_stdin
 
 
 def send_payload(payload: Iterator[bytes]) -> None:

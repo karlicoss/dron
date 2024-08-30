@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 from .common import get_parser
 from .ntfy_common import run_ntfy
 

@@ -1,10 +1,10 @@
-#!/usr/bin/env python3
 """
 uses https://github.com/dschep/ntfy
 """
-import subprocess
+
 import logging
 import socket
+import subprocess
 import sys
 from typing import NoReturn
 

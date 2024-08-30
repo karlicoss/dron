@@ -1,39 +1,39 @@
-#!/usr/bin/env python3
 from __future__ import annotations
 
 import argparse
+import os
+import shlex
+import shutil
+import sys
 from collections import OrderedDict
 from difflib import unified_diff
 from itertools import tee
-import os
 from pathlib import Path
 from pprint import pprint
-import shlex
-import shutil
 from subprocess import check_call, run
-import sys
 from tempfile import TemporaryDirectory
-from typing import NamedTuple, Union, Optional, Iterator, Iterable, Any, Set
+from typing import Any, Iterable, Iterator, NamedTuple, Union
 
 import click
 
+from . import launchd, systemd
 from .api import Job
 from .common import (
-    IS_SYSTEMD,
-    logger,
-    unwrap,
-    MANAGED_MARKER,
-    Unit, Body, UnitFile,
-    VERIFY_UNITS,
-    UnitState, State,
     ALWAYS,
-    print_monitor,
+    IS_SYSTEMD,
+    MANAGED_MARKER,
+    VERIFY_UNITS,
+    Body,
     MonitorParams,
+    State,
+    Unit,
+    UnitFile,
+    UnitState,
+    logger,
+    print_monitor,
+    unwrap,
 )
-from . import launchd
-from . import systemd
 from .systemd import _systemctl
-
 
 # todo appdirs?
 DRON_DIR = Path('~/.config/dron').expanduser()
@@ -89,7 +89,7 @@ def managed_units(*, with_body: bool) -> State:
 
 def make_state(jobs: Iterable[Job]) -> State:
     pre_units = []
-    names: Set[Unit] = set()
+    names: set[Unit] = set()
     for j in jobs:
         uname = j.unit_name
 
@@ -271,7 +271,7 @@ def apply_state(pending: State) -> None:
 
     # need to load units before starting the timers..
     _daemon_reload()
-   
+
     for a in adds:
         unit_file = a.unit_file
         unit = unit_file.name
@@ -328,15 +328,14 @@ def jobs():
 
         orig_mtime = tpath.stat().st_mtime
         while True:
-            res = run([editor, str(tpath)])
-            res.check_returncode()
+            res = run([editor, str(tpath)], check=True)
 
             new_mtime = tpath.stat().st_mtime
             if new_mtime == orig_mtime:
                 logger.warning('No notification made')
                 return
 
-            ex: Optional[Exception] = None
+            ex: Exception | None = None
             try:
                 state = do_lint(tabfile=tpath)
             except Exception as e:
@@ -351,12 +350,11 @@ def jobs():
             if ex is not None:
                 if click.confirm('Got errors. Try again?', default=True):
                     continue
-                else:
-                    raise ex
-            else:
-                drontab.write_text(tpath.read_text()) # handles symlinks correctly
-                logger.info(f"Wrote changes to {drontab}. Don't forget to commit!")
-                break
+                raise ex
+
+            drontab.write_text(tpath.read_text()) # handles symlinks correctly
+            logger.info(f"Wrote changes to {drontab}. Don't forget to commit!")
+            break
 
         # TODO show git diff?
         # TODO perhaps allow to carry on regardless? not sure..
@@ -367,7 +365,7 @@ Error = str
 # TODO perhaps, return Plan or error instead?
 
 # eh, implicit convention that only one state will be emitted. oh well
-def lint(tabfile: Path) -> Iterator[Union[Exception, State]]:
+def lint(tabfile: Path) -> Iterator[Exception | State]:
     linters = [
         [sys.executable, '-m', 'mypy', '--no-incremental', '--check-untyped', str(tabfile)],
     ]
@@ -392,7 +390,7 @@ def lint(tabfile: Path) -> Iterator[Union[Exception, State]]:
             env = {**os.environ}
             env = extra_path('MYPYPATH'  , dtab_dir, env)
 
-            r = run(l, cwd=str(ldir), env=env)
+            r = run(l, cwd=str(ldir), env=env, check=False)
         if r.returncode == 0:
             logger.info('OK')
             continue
@@ -538,11 +536,11 @@ def cmd_past(unit: Unit) -> None:
         return launchd.cmd_past(unit)
 
 
-def cmd_run(*, unit: Unit, exec: bool) -> None:
+def cmd_run(*, unit: Unit, do_exec: bool) -> None:
     if IS_SYSTEMD:
-        return systemd.cmd_run(unit=unit, exec=exec)
+        return systemd.cmd_run(unit=unit, do_exec=do_exec)
     else:
-        assert not exec  # support later
+        assert not do_exec  # support later
         return launchd.cmd_run(unit)
 
 
@@ -586,7 +584,7 @@ def make_parser() -> argparse.ArgumentParser:
     def add_verify(p: argparse.ArgumentParser) -> None:
         # specify in readme???
         # would be nice to use external checker..
-        # https://github.com/systemd/systemd/issues/8072 
+        # https://github.com/systemd/systemd/issues/8072
         # https://unix.stackexchange.com/questions/493187/systemd-under-ubuntu-18-04-1-fails-with-failed-to-create-user-slice-serv
         p.add_argument('--no-verify', action=VerifyOff, nargs=0, help='Skip systemctl verify step')
 
@@ -653,7 +651,7 @@ I elaborate on what led me to implement it and motivation [[https://beepb00p.xyz
 
     run_parser = sp.add_parser('run', help='Run the job right now, ignoring the timer')
     run_parser.add_argument('unit', type=str, nargs='?')  # TODO add shell completion?
-    run_parser.add_argument('--exec', action='store_true', help='Run directly, not via systemd/launchd')
+    run_parser.add_argument('--exec', action='store_true', dest='do_exec', help='Run directly, not via systemd/launchd')
 
     return p
 
@@ -720,8 +718,8 @@ def main() -> None:
         cmd_past(unit=unit)
     elif mode == 'run':
         unit = args.unit if args.unit is not None else prompt_for_unit()
-        exec = args.exec
-        cmd_run(unit=unit, exec=exec)
+        do_exec = args.do_exec
+        cmd_run(unit=unit, do_exec=do_exec)
     elif mode == 'edit':
         cmd_edit()
     elif mode == 'lint':
@@ -753,7 +751,7 @@ if __name__ == '__main__':
 
 
 # TODO stuff I learnt:
-# TODO  systemd-analyze --user unit-paths 
+# TODO  systemd-analyze --user unit-paths
 # TODO blame!
 #  systemd-analyze verify -- check syntax
 
