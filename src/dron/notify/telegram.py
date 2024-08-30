@@ -2,12 +2,13 @@
 uses telegram-send for Telegram notifications
 make sure to run "telegram-send --configure" beforehand!
 """
+
 import asyncio
 import logging
 import socket
 import sys
 
-from .common import get_parser, get_last_systemd_log, get_stdin
+from .common import get_last_systemd_log, get_parser, get_stdin
 
 
 def send(*, message: str) -> None:

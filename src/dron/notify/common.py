@@ -1,11 +1,9 @@
-#!/usr/bin/env python3
 import argparse
 import platform
 import shlex
-from subprocess import Popen, PIPE, STDOUT, check_output
 import sys
+from subprocess import PIPE, STDOUT, Popen, check_output
 from typing import Iterator
-
 
 IS_SYSTEMD = platform.system() != 'Darwin'  # if not systemd it's launchd
 

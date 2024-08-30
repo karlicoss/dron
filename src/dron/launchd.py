@@ -1,36 +1,35 @@
 from __future__ import annotations
 
-from datetime import timedelta
 import itertools
 import json
 import os
-from pathlib import Path
 import re
 import shlex
-from subprocess import check_output, Popen, PIPE, check_call
 import sys
-from tempfile import TemporaryDirectory
 import textwrap
-from typing import Sequence, Optional, Iterator, Any
-
+from datetime import timedelta
+from pathlib import Path
+from subprocess import PIPE, Popen, check_call, check_output
+from tempfile import TemporaryDirectory
+from typing import Any, Iterator, Sequence
 
 from .api import (
-    When, OnCalendar,
+    OnCalendar,
     OnFailureAction,
+    When,
 )
 from .common import (
-    Unit, Body, UnitFile,
     ALWAYS,
+    MANAGED_MARKER,
     Command,
-    logger,
+    LaunchdUnitState,
+    MonitorEntry,
     MonitorParams,
     State,
-    LaunchdUnitState,
+    Unit,
+    UnitFile,
     unwrap,
-    MANAGED_MARKER,
-    MonitorEntry,
 )
-
 
 # TODO custom launchd domain?? maybe instead could do dron/ or something?
 _LAUNCHD_DOMAIN = f'gui/{os.getuid()}'
@@ -107,7 +106,7 @@ def plist(
         unit_name: str,
         command: Command,
         on_failure: Sequence[OnFailureAction],
-        when: Optional[When]=None,
+        when: When | None=None,
 ) -> str:
     # TODO hmm, kinda mirrors 'escape' method, not sure
     cmd: Sequence[str]
@@ -121,14 +120,15 @@ def plist(
         # unquoting and splitting is way trickier than quoting and joining...
         # not sure how to implement it p
         # maybe we just want bash -c in this case, dunno how to implement properly
-        assert False, command
+        raise RuntimeError(command)
     del command
 
     mschedule = ''
     if when is None:
         # support later
-        assert False, unit_name
-    elif when == ALWAYS:
+        raise RuntimeError(unit_name)
+
+    if when == ALWAYS:
         mschedule = '<key>KeepAlive</key>\n<true/>'
     else:
         assert isinstance(when, OnCalendar), when
@@ -214,14 +214,16 @@ def plist(
 
 
 from .common import LaunchdUnitState
-def launchd_state(with_body: bool) -> Iterator[LaunchdUnitState]:
+
+
+def launchd_state(*, with_body: bool) -> Iterator[LaunchdUnitState]:
     # sadly doesn't look like it has json interface??
     dump = check_output(['launchctl', 'dumpstate']).decode('utf8')
 
-    name: Optional[str] = None
+    name: str | None = None
     extras: dict[str, Any] = {}
-    arguments: Optional[list[str]] = None
-    all_props: Optional[str] = None
+    arguments: list[str] | None = None
+    all_props: str | None = None
     fields = [
         'path',
         'last exit code',
@@ -247,7 +249,7 @@ def launchd_state(with_body: bool) -> Iterator[LaunchdUnitState]:
                 periodic_schedule = extras.get('run interval')
                 calendal_schedule = 'com.apple.launchd.calendarinterval' in unwrap(all_props)
 
-                schedule: Optional[str] = None
+                schedule: str | None = None
                 if periodic_schedule is not None:
                     schedule = 'every ' + periodic_schedule
                 elif calendal_schedule:

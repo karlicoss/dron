@@ -1,13 +1,15 @@
+from __future__ import annotations
+
 import argparse
+import platform
 import shlex
 import sys
 from dataclasses import asdict, dataclass, replace
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, Iterable, Optional, Sequence, Union
+from typing import Any, Dict, Iterable, Sequence, TypeVar, Union
 
-from loguru import logger
-
+from loguru import logger  # noqa: F401
 
 datetime_aware = datetime
 datetime_naive = datetime
@@ -20,7 +22,7 @@ VERIFY_UNITS = True
 # dunno, a bit less atomic though...
 
 class VerifyOff(argparse.Action):
-    def __call__(self, parser, namespace, values, option_string=None):
+    def __call__(self, parser, namespace, values, option_string = None):  # noqa: ARG002
         global VERIFY_UNITS
         VERIFY_UNITS = False
 
@@ -39,30 +41,27 @@ UnitFile = Path
 @dataclass
 class UnitState:
     unit_file: UnitFile
-    body: Optional[Body]
-    cmdline: Optional[Sequence[str]]  # can be None for timers
+    body: Body | None
+    cmdline: Sequence[str] | None  # can be None for timers
 
 
 @dataclass
 class LaunchdUnitState(UnitState):
     # NOTE: can legit be str (e.g. if unit was never ran before)
-    last_exit_code: Optional[str]
-    pid: Optional[str]
-    schedule: Optional[str]
+    last_exit_code: str | None
+    pid: str | None
+    schedule: str | None
 
 
 State = Iterable[UnitState]
 
 
-
-
-import platform
 IS_SYSTEMD = platform.system() != 'Darwin'  # if not systemd it's launchd
 
 
-from typing import TypeVar
+
 T = TypeVar('T')
-def unwrap(x: Optional[T]) -> T:
+def unwrap(x: T | None) -> T:
     assert x is not None
     return x
 
@@ -113,10 +112,10 @@ def wrap(script: PathIsh, command: Command) -> Escaped:
 
 def test_wrap() -> None:
     assert wrap('/bin/bash', ['-c', 'echo whatever']) == "/bin/bash -c 'echo whatever'"
-    bin = Path('/bin/bash')
-    assert wrap(bin, "-c 'echo whatever'") == "/bin/bash -c 'echo whatever'"
-    assert wrap(bin, ['echo', bin]) == "/bin/bash echo /bin/bash"
-    assert wrap('cat', bin) == "cat /bin/bash"
+    bin_ = Path('/bin/bash')
+    assert wrap(bin_, "-c 'echo whatever'") == "/bin/bash -c 'echo whatever'"
+    assert wrap(bin_, ['echo', bin_]) == "/bin/bash echo /bin/bash"
+    assert wrap('cat', bin_) == "cat /bin/bash"
 
 
 
@@ -127,8 +126,8 @@ class MonitorEntry:
     left: str
     next: str
     schedule: str
-    command: Optional[str]
-    pid: Optional[str]
+    command: str | None
+    pid: str | None
 
     """
     'status' is coming from systemd/launchd, and it's a string.
@@ -139,13 +138,12 @@ class MonitorEntry:
 
 
 def print_monitor(entries: Iterable[MonitorEntry]) -> None:
-    entries = list(sorted(
+    entries = sorted(
         entries,
         key=lambda e: (e.pid is None, e.status_ok, e),
-    ))
+    )
 
-    import termcolor
-
+    import termcolor  # noqa: I001
     import tabulate
     tabulate.PRESERVE_WHITESPACE = True
 

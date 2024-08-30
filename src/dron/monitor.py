@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 from dataclasses import asdict, fields
 from functools import lru_cache
 from typing import Any
@@ -7,7 +9,7 @@ from textual.app import App, ComposeResult
 from textual.widgets import DataTable, Log
 
 from .common import MonitorEntry, MonitorParams, unwrap
-from .dron import managed_units, get_entries_for_monitor
+from .dron import get_entries_for_monitor, managed_units
 
 
 # todo try RichLog? https://textual.textualize.io/guide/input

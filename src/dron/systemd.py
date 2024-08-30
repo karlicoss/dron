@@ -1,39 +1,42 @@
 from __future__ import annotations
 
+import json
+import os
+import re
+import shlex
 from datetime import datetime, timedelta, timezone
 from functools import lru_cache
 from itertools import groupby
-import json
-import os
 from pathlib import Path
-import re
-import shlex
-from subprocess import run, PIPE, Popen
+from subprocess import PIPE, Popen, run
 from tempfile import TemporaryDirectory
-from typing import Optional, Iterator, Any, Sequence
+from typing import Any, Iterator, Sequence
+
 from zoneinfo import ZoneInfo
 
-
+from .api import (
+    OnFailureAction,
+    When,
+)
 from .common import (
     IS_SYSTEMD,
-    Unit, Body,
-    UnitState, State,
-    MANAGED_MARKER, is_managed,
+    MANAGED_MARKER,
+    Body,
     Command,
+    MonitorEntry,
+    MonitorParams,
+    State,
     TimerSpec,
+    Unit,
+    UnitState,
     datetime_aware,
     escape,
+    is_managed,
     logger,
-    MonitorParams,
-    MonitorEntry,
-)
-from .api import (
-    When, OnCalendar,
-    OnFailureAction,
 )
 
 
-def is_missing_systemd() -> Optional[str]:
+def is_missing_systemd() -> str | None:
     if not IS_SYSTEMD:
         return "running on macos"
     return None
@@ -151,7 +154,7 @@ def verify_units(pre_units: list[tuple[Unit, Body]]) -> None:
         tdir = Path(_tdir)
         for unit, body in pre_units:
             (tdir / unit).write_text(body)
-        res = run(['systemd-analyze', '--user', 'verify', *tdir.glob('*')], stdout=PIPE, stderr=PIPE)
+        res = run(['systemd-analyze', '--user', 'verify', *tdir.glob('*')], capture_output=True, check=False)
         # ugh. apparently even exit code 0 doesn't guarantee correct output??
         out = res.stdout.decode('utf8')
         err = res.stderr.decode('utf8')
@@ -227,7 +230,10 @@ def _sd(s: str) -> str:
 class BusManager:
     def __init__(self) -> None:
         # unused-ignore because on macos there is no dbus (but this code is still running mypy on CI)
-        from dbus import SessionBus, Interface  # type: ignore[import-untyped,import-not-found,unused-ignore]
+        from dbus import (  # type: ignore[import-untyped,import-not-found,unused-ignore]
+            Interface,
+            SessionBus,
+        )
         self.Interface = Interface  # meh
 
         self.bus = SessionBus()  # note: SystemBus is for system-wide services
@@ -268,7 +274,7 @@ def systemd_state(*, with_body: bool) -> State:
         # stale = int(bus.prop(props, '.Unit', 'NeedDaemonReload')) == 1
         unit_file = Path(str(bus.prop(props, '.Unit', 'FragmentPath'))).resolve()
         body = unit_file.read_text() if with_body else None
-        cmdline: Optional[Sequence[str]]
+        cmdline: Sequence[str] | None
         if '.timer' in name: # meh
             cmdline = None
         else:
@@ -280,7 +286,7 @@ def systemd_state(*, with_body: bool) -> State:
 def test_managed_units() -> None:
     skip_if_no_systemd()
     # TODO wonder if i'd be able to use launchd on ci...
-    from .dron import managed_units, cmd_monitor
+    from .dron import cmd_monitor, managed_units
 
     # shouldn't fail at least
     list(managed_units(with_body=True))
@@ -312,7 +318,7 @@ class MonitorHelper:
             return datetime.fromtimestamp(u / 10 ** 6, tz=timezone.utc)
 
     @property
-    @lru_cache
+    @lru_cache  # noqa: B019
     def local_tz(self) -> ZoneInfo:
         try:
             # it's a required dependency, but still might fail in some weird environments?
@@ -340,7 +346,7 @@ def get_entries_for_monitor(managed: State, *, params: MonitorParams) -> list[Mo
     for k, _gr in groupby(names, key=uname):
         gr = list(_gr)
         # if timer is None, guess that means the job is always running?
-        timer: Optional[str]
+        timer: str | None
         service: str
         if len(gr) == 2:
             [service, timer] = gr
@@ -402,7 +408,7 @@ def get_entries_for_monitor(managed: State, *, params: MonitorParams) -> list[Mo
             return ads
 
 
-        left   = f'{str(fmt_delta(left_delta)):<9}'
+        left   = f'{fmt_delta(left_delta)!s:<9}'
         if last_dt.timestamp() == 0:
             ago = 'never' # TODO yellow?
         else:
@@ -417,7 +423,7 @@ def get_entries_for_monitor(managed: State, *, params: MonitorParams) -> list[Mo
         exec_start = BusManager.exec_start(props)
         assert exec_start is not None, service  # not None for services
         command = ' '.join(map(shlex.quote, exec_start)) if params.with_command else None
-        _pid: Optional[int] = int(bus.prop(props, '.Service', 'MainPID'))
+        _pid: int | None = int(bus.prop(props, '.Service', 'MainPID'))
         pid  = None if _pid == 0 else str(_pid)
 
         if params.with_success_rate:
@@ -489,8 +495,8 @@ def cmd_past(unit: Unit) -> None:
         print(ts.isoformat(), msg)
 
 
-def cmd_run(*, unit: Unit, exec: bool) -> None:
-    assert exec  # support without exec later
+def cmd_run(*, unit: Unit, do_exec: bool) -> None:
+    assert do_exec  # support without exec later
     # TODO we might have called it before via managed_units.. maybe need to cache
     states = []
     for s in systemd_state(with_body=False):

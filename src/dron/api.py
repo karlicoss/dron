@@ -1,20 +1,22 @@
+from __future__ import annotations
+
 import getpass
 import sys
-from typing import NamedTuple, Optional, Sequence
+from typing import NamedTuple, Sequence
 
 from .common import (
-    Command,
-    When, OnCalendar,
-    wrap,
     IS_SYSTEMD,
+    Command,
+    OnCalendar,
+    When,
+    wrap,
 )
-
 
 OnFailureAction = str
 
 
 class Job(NamedTuple):
-    when: Optional[When]
+    when: When | None
     command: Command
     unit_name: str
     on_failure: Sequence[OnFailureAction]
@@ -39,7 +41,7 @@ class notify:
     telegram = f'{sys.executable} -m dron.notify.telegram --job %n'
 
 
-def job(when: Optional[When], command: Command, *, unit_name: str, on_failure: Sequence[OnFailureAction]=(notify.email_local,), **kwargs) -> Job:
+def job(when: When | None, command: Command, *, unit_name: str, on_failure: Sequence[OnFailureAction]=(notify.email_local,), **kwargs) -> Job:
     assert 'extra_email' not in kwargs, unit_name  # deprecated
 
     """

@@ -1,13 +1,12 @@
 #!/usr/bin/env python3
 import argparse
-from pathlib import Path
 import shlex
-from subprocess import PIPE, Popen, STDOUT
 import sys
-from typing import NoReturn, Iterator
+from pathlib import Path
+from subprocess import PIPE, STDOUT, Popen
+from typing import Iterator, NoReturn
 
 from loguru import logger
-
 
 LOG_DIR = Path('~/Library/Logs/dron').expanduser()
 
@@ -53,10 +52,10 @@ def main() -> NoReturn:
 
 
     def payload() -> Iterator[bytes]:
-        yield f"exit code: {rc}\n".encode('utf8')
+        yield f"exit code: {rc}\n".encode()
         yield b'command: \n'
         yield (' '.join(map(shlex.quote, cmd)) + '\n').encode('utf8')
-        yield f'log file: {log_file}\n'.encode('utf8')
+        yield f'log file: {log_file}\n'.encode()
         yield b'\n'
         yield b'output (stdout + stderr):\n\n'
         # TODO shit -- if multiple notifications, can't use generator for captured_log
