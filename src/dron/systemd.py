@@ -358,8 +358,11 @@ def get_entries_for_monitor(managed: State, *, params: MonitorParams) -> list[Mo
         if timer is not None:
             props = bus.properties(timer)
             cal   = bus.prop(props, '.Timer', 'TimersCalendar')
-            last  = bus.prop(props, '.Timer', 'LastTriggerUSec')
             next_ = bus.prop(props, '.Timer', 'NextElapseUSecRealtime')
+
+            unit_props = bus.properties(service)
+            # note: there is also bus.prop(props, '.Timer', 'LastTriggerUSec'), but makes more sense to use unit to account for manual runs
+            last  = bus.prop(unit_props, '.Unit', 'ActiveExitTimestamp')
 
             schedule = cal[0][1]  # TODO is there a more reliable way to retrieve it??
             # todo not sure if last is really that useful..
