@@ -540,8 +540,7 @@ def cmd_run(*, unit: Unit, do_exec: bool) -> None:
     if IS_SYSTEMD:
         return systemd.cmd_run(unit=unit, do_exec=do_exec)
     else:
-        assert not do_exec  # support later
-        return launchd.cmd_run(unit)
+        return launchd.cmd_run(unit=unit, do_exec=do_exec)
 
 
 # TODO test it and also on Circle?

@@ -29,6 +29,7 @@ from .common import (
     Unit,
     UnitFile,
     unwrap,
+    logger,
 )
 
 # TODO custom launchd domain?? maybe instead could do dron/ or something?
@@ -83,6 +84,7 @@ def launchctl_reload(*, unit: Unit, unit_file: UnitFile) -> None:
 
 
 def launchd_wrapper(*, job: str, on_failure: list[str]) -> list[str]:
+    # fmt: off
     return [
         sys.executable,
         '-m',
@@ -91,6 +93,7 @@ def launchd_wrapper(*, job: str, on_failure: list[str]) -> list[str]:
         '--job', job,
         '--',
     ]
+    # fmt: on
 
 
 def remove_launchd_wrapper(cmd: str) -> str:
@@ -102,11 +105,11 @@ def remove_launchd_wrapper(cmd: str) -> str:
 
 
 def plist(
-        *,
-        unit_name: str,
-        command: Command,
-        on_failure: Sequence[OnFailureAction],
-        when: When | None=None,
+    *,
+    unit_name: str,
+    command: Command,
+    on_failure: Sequence[OnFailureAction],
+    when: When | None=None,
 ) -> str:
     # TODO hmm, kinda mirrors 'escape' method, not sure
     cmd: Sequence[str]
@@ -338,12 +341,34 @@ def cmd_past(unit: Unit) -> None:
             interesting = re.search(' spawned .* because', msg) or 'exited ' in msg
             if not interesting:
                 continue
-            ts  = j['timestamp']
+            ts = j['timestamp']
             print(ts, sub, msg)
 
 
-def cmd_run(unit: Unit) -> None:
-    return launchctl_kickstart(unit=unit)
+def cmd_run(*, unit: Unit, do_exec: bool) -> None:
+    if not do_exec:
+        launchctl_kickstart(unit=unit)
+        return
+
+    states = []
+    for s in launchd_state(with_body=False):
+        if s.unit_file.stem == unit:
+            states.append(s)
+    [state] = states
+    cmdline = state.cmdline
+    assert cmdline is not None, unit
+
+    ## cut off launchd wrapper
+    sep_i = cmdline.index('--')
+    cmdline = cmdline[sep_i + 1 :]
+    ##
+
+    cmds = ' '.join(map(shlex.quote, cmdline))
+    logger.info(f'running: {cmds}')
+    os.execvp(
+        cmdline[0],
+        list(cmdline),
+    )
 
 
 def get_entries_for_monitor(managed: State, *, params: MonitorParams) -> list[MonitorEntry]:
