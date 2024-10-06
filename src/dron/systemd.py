@@ -4,6 +4,7 @@ import json
 import os
 import re
 import shlex
+import shutil
 from datetime import datetime, timedelta, timezone
 from functools import lru_cache
 from itertools import groupby
@@ -19,7 +20,6 @@ from .api import (
     When,
 )
 from .common import (
-    IS_SYSTEMD,
     MANAGED_MARKER,
     Body,
     Command,
@@ -36,9 +36,10 @@ from .common import (
 )
 
 
-def is_missing_systemd() -> str | None:
-    if not IS_SYSTEMD:
-        return "running on macos"
+def _is_missing_systemd() -> str | None:
+    has_systemd = shutil.which('systemctl') is not None
+    if not has_systemd:
+        return "systemd not available, running under docker or osx"
     return None
 
 
@@ -300,7 +301,7 @@ def test_managed_units() -> None:
 
 def skip_if_no_systemd() -> None:
     import pytest
-    reason = is_missing_systemd()
+    reason = _is_missing_systemd()
     if reason is not None:
         pytest.skip(f'No systemd: {reason}')
 
