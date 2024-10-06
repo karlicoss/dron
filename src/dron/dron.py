@@ -22,7 +22,6 @@ from .common import (
     ALWAYS,
     IS_SYSTEMD,
     MANAGED_MARKER,
-    VERIFY_UNITS,
     Body,
     MonitorParams,
     State,
@@ -46,6 +45,9 @@ DRONTAB = DRON_DIR / 'drontab.py'
 
 UnitName = str
 def verify_units(pre_units: list[tuple[UnitName, Body]]) -> None:
+    # need an inline import here in case we modify this variable from cli/tests
+    from .common import VERIFY_UNITS
+
     if not VERIFY_UNITS:
         return
 
@@ -457,7 +459,9 @@ def jobs():
     )
 ''')
 
-    if IS_SYSTEMD:
+    from .systemd import _is_missing_systemd
+
+    if not _is_missing_systemd():
         # this test doesn't work without systemd yet, because launchd adapter doesn't support unquoted commands, at least yet..
         example = _drontab_example()
         # ugh. some hackery to make it find the executable..
@@ -493,7 +497,9 @@ def load_jobs(tabfile: Path, ppath: Path) -> Iterator[Job]:
         sys.path.remove(pp)  # extremely meh..
 
     jobs = globs['jobs']
-    return jobs()
+    for job in jobs():
+        assert isinstance(job, Job), job  # just in case for dumb typos
+        yield job
 
 
 def apply(tabfile: Path) -> None:
@@ -763,7 +769,6 @@ if __name__ == '__main__':
 # TODO FIXME ok, for now, it's fine, but with more sophisticated timers might be a bit annoying
 
 # TODO use python's literate types?
-# TODO
 
 
 # TODO wow, that's quite annoying. so timer has to be separate file. oh well.
