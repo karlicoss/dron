@@ -287,7 +287,8 @@ def systemd_state(*, with_body: bool) -> State:
 def test_managed_units() -> None:
     skip_if_no_systemd()
     # TODO wonder if i'd be able to use launchd on ci...
-    from .dron import cmd_monitor, managed_units
+    from .cli import cmd_monitor
+    from .dron import managed_units
 
     # shouldn't fail at least
     list(managed_units(with_body=True))

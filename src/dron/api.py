@@ -17,12 +17,13 @@ from .common import (
 
 OnFailureAction = str
 
+UnitName = str
 
 @dataclass
 class Job:
     when: When | None
     command: Command
-    unit_name: str
+    unit_name: UnitName
     on_failure: Sequence[OnFailureAction]
     kwargs: dict[str, str]
 
