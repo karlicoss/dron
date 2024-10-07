@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import importlib.util
 import os
 import shlex
 import shutil
@@ -12,7 +13,7 @@ from pathlib import Path
 from pprint import pprint
 from subprocess import check_call, run
 from tempfile import TemporaryDirectory
-from typing import Any, Iterable, Iterator, NamedTuple, Union
+from typing import Iterable, Iterator, NamedTuple, Union
 
 import click
 
@@ -428,7 +429,7 @@ def test_do_lint(tmp_path: Path) -> None:
 
 
     def ok(body: str) -> None:
-        tpath = Path(tmp_path) / 'drontab'
+        tpath = Path(tmp_path) / 'drontab.py'
         tpath.write_text(body)
         do_lint(tabfile=tpath)
 
@@ -485,21 +486,25 @@ def drontab_dir() -> str:
 
 
 def load_jobs(tabfile: Path, ppath: Path) -> Iterator[Job]:
-    globs: dict[str, Any] = {}
-
-    # TODO also need to modify pythonpath here??? ugh!
-
     pp = str(ppath)
     sys.path.insert(0, pp)
     try:
-        exec(tabfile.read_text(), globs)
+        spec = importlib.util.spec_from_file_location(tabfile.name, tabfile)
+        assert spec is not None, tabfile
+        loader = spec.loader
+        assert loader is not None, (tabfile, spec)
+        module = importlib.util.module_from_spec(spec)
+        loader.exec_module(module)
     finally:
         sys.path.remove(pp)  # extremely meh..
 
-    jobs = globs['jobs']
+    jobs = module.jobs
+    emitted: dict[str, Job] = {}
     for job in jobs():
         assert isinstance(job, Job), job  # just in case for dumb typos
+        assert job.unit_name not in emitted, (job, emitted[job.unit_name])
         yield job
+        emitted[job.unit_name] = job
 
 
 def apply(tabfile: Path) -> None:
