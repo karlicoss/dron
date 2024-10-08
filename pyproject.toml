@@ -17,7 +17,7 @@ requires-python = ">=3.9"
 # FIXME dbus
 
 ## these need to be set if you're planning to upload to pypi
-license = {file = "LICENSE"}
+license = {file = "LICENSE.txt"}
 authors = [
     {name = "Dima Gerasimov (@karlicoss)", email = "karlicoss@gmail.com"},
 ]
