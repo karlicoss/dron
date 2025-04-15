@@ -13,10 +13,11 @@ dependencies = [
     "loguru"        ,  # nicer logging
     "dbus-python; platform_system != 'Darwin'",  # dbus interface to systemd
 ]
-requires-python = ">=3.9"
+requires-python = ">=3.12"
 # FIXME dbus
 
 ## these need to be set if you're planning to upload to pypi
+description = "What if cron and systemd had a baby?"
 license = {file = "LICENSE.txt"}
 authors = [
     {name = "Dima Gerasimov (@karlicoss)", email = "karlicoss@gmail.com"},
@@ -24,26 +25,29 @@ authors = [
 maintainers = [
     {name = "Dima Gerasimov (@karlicoss)", email = "karlicoss@gmail.com"},
 ]
-
 [project.urls]
 Homepage = "https://github.com/karlicoss/dron"
 ##
 
-[project.scripts]
-dron = "dron.__main__:main"
 
 [project.optional-dependencies]
-testing = [
-    "pytest",
-    "ruff",
-    "mypy",
-    "lxml",  # for mypy html coverage
-]
 notify-telegram = [
     # version before that had a bug that prevented it from working
     # see https://github.com/rahiel/telegram-send/issues/115#issuecomment-1368728425
     "telegram-send>=0.37",
 ]
+[dependency-groups]
+testing = [
+    "pytest",
+    "ruff",
+    "mypy",
+    "lxml",  # for mypy html coverage
+
+    "types-tabulate",
+]
+
+[project.scripts]
+dron = "dron.__main__:main"
 
 
 [build-system]

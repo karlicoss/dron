@@ -7,11 +7,12 @@ import re
 import shlex
 import sys
 import textwrap
+from collections.abc import Iterator, Sequence
 from datetime import timedelta
 from pathlib import Path
 from subprocess import PIPE, Popen, check_call, check_output
 from tempfile import TemporaryDirectory
-from typing import Any, Iterator, Sequence
+from typing import Any
 
 from .api import (
     OnCalendar,
@@ -109,7 +110,7 @@ def plist(
     unit_name: str,
     command: Command,
     on_failure: Sequence[OnFailureAction],
-    when: When | None=None,
+    when: When | None = None,
 ) -> str:
     # TODO hmm, kinda mirrors 'escape' method, not sure
     cmd: Sequence[str]
@@ -136,17 +137,21 @@ def plist(
     else:
         assert isinstance(when, OnCalendar), when
         # https://www.freedesktop.org/software/systemd/man/systemd.time.html#
+        # fmt: off
         seconds = {
             'minutely': 60,
             'hourly'  : 60 * 60,
             'daily'   : 60 * 60 * 24,
         }.get(when)
+        # fmt: on
         if seconds is None:
             # ok, try systemd-like spec..
+            # fmt: off
             specs = [
                 (re.escape('*:0/')   + r'(\d+)', 60),
-                (re.escape('*:*:0/') + r'(\d+)', 1 ),
+                (re.escape('*:*:0/') + r'(\d+)', 1),
             ]
+            # fmt: on
             for rgx, mult in specs:
                 m = re.fullmatch(rgx, when)
                 if m is not None:
@@ -159,23 +164,24 @@ def plist(
             assert m is not None, when
             hh = m.group(1)
             mm = m.group(2)
-            mschedule = '\n'.join([
-                '<key>StartCalendarInterval</key>',
-                '<dict>',
-                '<key>Hour</key>'  , f'<integer>{int(hh)}</integer>',
-                '<key>Minute</key>', f'<integer>{int(mm)}</integer>',
-                '</dict>',
-            ])
+            mschedule = '\n'.join(
+                [
+                    '<key>StartCalendarInterval</key>',
+                    '<dict>',
+                    '<key>Hour</key>',
+                    f'<integer>{int(hh)}</integer>',
+                    '<key>Minute</key>',
+                    f'<integer>{int(mm)}</integer>',
+                    '</dict>',
+                ]
+            )
         else:
             mschedule = '\n'.join(('<key>StartInterval</key>', f'<integer>{seconds}</integer>'))
 
     assert mschedule != '', unit_name
 
     # meh.. not sure how to reconcile it better with systemd
-    on_failure = [
-        x.replace('--job %n', f'--job {unit_name}') + ' --stdin'
-        for x in on_failure
-    ]
+    on_failure = [x.replace('--job %n', f'--job {unit_name}') + ' --stdin' for x in on_failure]
 
     # attempt to set argv[0] properly
     # hmm I was hoping it would make desktop notifications ('background service added' nicer)
@@ -302,15 +308,19 @@ def verify_unit(*, unit_name: str, body: str) -> None:
     with TemporaryDirectory() as tdir:
         tfile = Path(tdir) / unit_name
         tfile.write_text(body)
-        check_call([
-            'plutil', '-lint',
-            '-s',  # silent on success
-            tfile,
-        ])
+        check_call(
+            [
+                'plutil',
+                '-lint',
+                '-s',  # silent on success
+                tfile,
+            ]
+        )
 
 
 def cmd_past(unit: Unit) -> None:
     sub = fqn('dron.' + unit)
+    # fmt: off
     cmd = [
         # todo maybe use 'stream'??
         'log', 'show', '--info',
@@ -323,8 +333,10 @@ def cmd_past(unit: Unit) -> None:
         '--style', 'ndjson',
         '--color', 'always',
     ]
+    # fmt: on
     with Popen(cmd, stdout=PIPE, encoding='utf8') as p:
-        out = p.stdout; assert out is not None
+        out = p.stdout
+        assert out is not None
         for line in out:
             j = json.loads(line)
             if j.get('finished') == 1:
@@ -402,14 +414,16 @@ def get_entries_for_monitor(managed: State, *, params: MonitorParams) -> list[Mo
 
         pid = s.pid
 
-        entries.append(MonitorEntry(
-            unit=name,
-            status=status,
-            left='n/a',
-            next='n/a',
-            schedule=schedule,
-            command=command,
-            pid=pid,
-            status_ok=status_ok,
-        ))
+        entries.append(
+            MonitorEntry(
+                unit=name,
+                status=status,
+                left='n/a',
+                next='n/a',
+                schedule=schedule,
+                command=command,
+                pid=pid,
+                status_ok=status_ok,
+            )
+        )
     return entries

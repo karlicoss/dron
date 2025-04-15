@@ -4,8 +4,8 @@ import getpass
 import inspect
 import re
 import sys
+from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import Sequence
 
 from .common import (
     IS_SYSTEMD,
@@ -18,6 +18,7 @@ from .common import (
 OnFailureAction = str
 
 UnitName = str
+
 
 @dataclass
 class Job:
@@ -95,12 +96,12 @@ def job(
 
 
 __all__ = (
-    'When',
+    'Command',
+    'Job',  # todo maybe don't expose it?
     'OnCalendar',
     'OnFailureAction',
-    'Command',
-    'wrap',
+    'When',
     'job',
     'notify',
-    'Job',  # todo maybe don't expose it?
+    'wrap',
 )

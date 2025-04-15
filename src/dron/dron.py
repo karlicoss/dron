@@ -5,12 +5,13 @@ import os
 import shlex
 import sys
 from collections import OrderedDict
+from collections.abc import Iterable, Iterator
 from difflib import unified_diff
 from itertools import tee
 from pathlib import Path
 from subprocess import check_call, run
 from tempfile import TemporaryDirectory
-from typing import Iterable, Iterator, NamedTuple, Union
+from typing import NamedTuple
 
 import click
 
@@ -60,7 +61,7 @@ def verify_unit(*, unit_name: UnitName, body: Body) -> None:
     return verify_units([(unit_name, body)])
 
 
-def write_unit(*, unit: Unit, body: Body, prefix: Path=DRON_UNITS_DIR) -> None:
+def write_unit(*, unit: Unit, body: Body, prefix: Path = DRON_UNITS_DIR) -> None:
     unit_file = prefix / unit
 
     logger.info(f'writing unit file: {unit_file}')
@@ -146,10 +147,11 @@ class Add(NamedTuple):
         return self.unit_file.name
 
 
-Action = Union[Update, Delete, Add]
+Action = Update | Delete | Add
 Plan = Iterable[Action]
 
 # TODO ugh. not sure how to verify them?
+
 
 def compute_plan(*, current: State, pending: State) -> Plan:
     # eh, I feel like i'm reinventing something already existing here...
@@ -178,6 +180,7 @@ def apply_state(pending: State) -> None:
     current = list(managed_units(with_body=True))
 
     pending_units = {s.unit_file.name for s in pending}
+
     def is_always_running(unit_path: Path) -> bool:
         name = unit_path.stem
         has_timer = f'{name}.timer' in pending_units
@@ -213,10 +216,12 @@ def apply_state(pending: State) -> None:
 
     for u in _updates:
         unit = a.unit
-        diff: Diff = list(unified_diff(
-            u.old_body.splitlines(keepends=True),
-            u.new_body.splitlines(keepends=True),
-        ))
+        diff: Diff = list(
+            unified_diff(
+                u.old_body.splitlines(keepends=True),
+                u.new_body.splitlines(keepends=True),
+            )
+        )
         if len(diff) == 0:
             nochange.append(u)
         else:
@@ -231,15 +236,14 @@ def apply_state(pending: State) -> None:
     for a in deletes:
         if IS_SYSTEMD:
             # TODO stop timer first?
-            check_call(_systemctl('stop'   , a.unit))
+            check_call(_systemctl('stop', a.unit))
             check_call(_systemctl('disable', a.unit))
         else:
             launchd.launchctl_unload(unit=Path(a.unit).stem)
     for a in deletes:
         (DRON_UNITS_DIR / a.unit).unlink()
 
-
-    for (u, diff) in updates:
+    for u, diff in updates:
         unit = u.unit
         unit_file = u.unit_file
         logger.info(f'updating {unit}')
@@ -297,6 +301,7 @@ def manage(state: State) -> None:
 Error = str
 # TODO perhaps, return Plan or error instead?
 
+
 # eh, implicit convention that only one state will be emitted. oh well
 def lint(tabfile: Path) -> Iterator[Exception | State]:
     linters = [
@@ -306,7 +311,6 @@ def lint(tabfile: Path) -> Iterator[Exception | State]:
     ldir = tabfile.parent
     # TODO not sure if should always lint in temporary dir to prevent turds?
 
-    dron_dir = str(Path(__file__).resolve().absolute().parent)
     dtab_dir = drontab_dir()
 
     # meh.
@@ -317,11 +321,10 @@ def lint(tabfile: Path) -> Iterator[Exception | State]:
 
     errors = []
     for l in linters:
-        scmd = ' '.join(map(shlex.quote, l))
-        logger.info(f'Running: {scmd}')
-        with TemporaryDirectory() as td:
+        logger.info(f'Running: {shlex.join(l)}')
+        with TemporaryDirectory():  # TODO why do I use temporary dir here?
             env = {**os.environ}
-            env = extra_path('MYPYPATH'  , dtab_dir, env)
+            env = extra_path('MYPYPATH', dtab_dir, env)
 
             r = run(l, cwd=str(ldir), env=env, check=False)
         if r.returncode == 0:
@@ -357,30 +360,36 @@ def lint(tabfile: Path) -> Iterator[Exception | State]:
 def test_do_lint(tmp_path: Path) -> None:
     import pytest
 
-
-    def ok(body: str) -> None:
+    def OK(body: str) -> None:
         tpath = Path(tmp_path) / 'drontab.py'
         tpath.write_text(body)
         do_lint(tabfile=tpath)
 
-    def fails(body: str) -> None:
+    def FAILS(body: str) -> None:
         with pytest.raises(Exception):
-            ok(body)
+            OK(body)
 
-    fails(body='''
+    FAILS(
+        body='''
     None.whatever
-    ''')
+    '''
+    )
 
     # no jobs
-    fails(body='''
-    ''')
+    FAILS(
+        body='''
+    '''
+    )
 
-    ok(body='''
+    OK(
+        body='''
 def jobs():
     yield from []
-''')
+'''
+    )
 
-    ok(body='''
+    OK(
+        body='''
 from dron.api import job
 def jobs():
     yield job(
@@ -388,7 +397,8 @@ def jobs():
         ['/bin/echo', '123'],
         unit_name='unit_test',
     )
-''')
+'''
+    )
 
     from .systemd import _is_missing_systemd
 
@@ -400,12 +410,12 @@ def jobs():
         # ugh. some hackery to make it find the executable..
         echo = " '/bin/echo"
         example = example.replace(" 'linkchecker", echo).replace(" '/home/user/scripts/run-borg", echo).replace(" 'ping", " '/bin/ping")
-        ok(body=example)
+        OK(body=example)
 
 
 def do_lint(tabfile: Path) -> State:
     eit, vit = tee(lint(tabfile))
-    errors = [r for r in eit if     isinstance(r, Exception)]
+    errors = [r for r in eit if isinstance(r, Exception)]
     values = [r for r in vit if not isinstance(r, Exception)]
     assert len(errors) == 0, errors
     [state] = values
@@ -444,11 +454,7 @@ def apply(tabfile: Path) -> None:
     manage(state=state)
 
 
-get_entries_for_monitor = (
-    systemd.get_entries_for_monitor
-    if IS_SYSTEMD else
-    launchd.get_entries_for_monitor
-)
+get_entries_for_monitor = systemd.get_entries_for_monitor if IS_SYSTEMD else launchd.get_entries_for_monitor
 
 
 def main() -> None:

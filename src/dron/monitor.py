@@ -41,7 +41,6 @@ def as_row(entry: MonitorEntry) -> dict[str, Any]:
     cols = get_columns()
     res = {k: v for k, v in asdict(entry).items() if k in cols}
 
-    v = res['status']
     color = 'green' if entry.status_ok else 'red'
     res['status'] = f'[{color}]' + res['status'] + f'[/{color}]'
 
@@ -57,7 +56,6 @@ def as_row(entry: MonitorEntry) -> dict[str, Any]:
 
 
 class MonitorApp(App):
-
     def __init__(self, *, monitor_params: MonitorParams, refresh_every: int) -> None:
         super().__init__()
         self.monitor_params = monitor_params
@@ -126,7 +124,7 @@ class MonitorApp(App):
         columns = get_columns()
 
         def sort_key(row):
-            data = dict(zip(columns, row))
+            data = dict(zip(columns, row, strict=True))
             is_running = 'running' in data['next']
             failed = 'exit-code' in data['status']
             return (not is_running, not failed, data['unit'])

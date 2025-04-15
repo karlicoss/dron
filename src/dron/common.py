@@ -4,10 +4,11 @@ import argparse
 import platform
 import shlex
 import sys
+from collections.abc import Iterable, Sequence
 from dataclasses import asdict, dataclass, replace
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, Iterable, Sequence, TypeVar, Union
+from typing import Any, TypeVar
 
 from loguru import logger  # noqa: F401
 
@@ -21,8 +22,9 @@ VERIFY_UNITS = True
 # I guess could do two stages, i.e. units first, then timers
 # dunno, a bit less atomic though...
 
+
 class VerifyOff(argparse.Action):
-    def __call__(self, parser, namespace, values, option_string = None):  # noqa: ARG002
+    def __call__(self, parser, namespace, values, option_string=None):  # noqa: ARG002
         global VERIFY_UNITS
         VERIFY_UNITS = False
 
@@ -59,44 +61,49 @@ State = Iterable[UnitState]
 IS_SYSTEMD = platform.system() != 'Darwin'  # if not systemd it's launchd
 
 
-
 T = TypeVar('T')
+
+
 def unwrap(x: T | None) -> T:
     assert x is not None
     return x
 
 
-PathIsh = Union[str, Path]
+PathIsh = str | Path
 
 # if it's an str, assume it's already escaped
 # otherwise we are responsible for escaping..
-Command = Union[PathIsh, Sequence[PathIsh]]
+Command = PathIsh | Sequence[PathIsh]
 
 
 OnCalendar = str
-TimerSpec = Dict[str, str] # meh # TODO why is it a dict???
+TimerSpec = dict[str, str]  # meh # TODO why is it a dict???
 ALWAYS = 'always'
-When = Union[OnCalendar, TimerSpec]
+When = OnCalendar | TimerSpec
 
 
 MANAGED_MARKER = '(MANAGED BY DRON)'
+
+
 def is_managed(body: str) -> bool:
     # switching off it because it's unfriendly to launchd
     legacy_marker = '<MANAGED BY DRON>'
     return MANAGED_MARKER in body or legacy_marker in body
 
 
-
 pytest_fixture: Any
 under_pytest = 'pytest' in sys.modules
 if under_pytest:
     import pytest
+
     pytest_fixture = pytest.fixture
 else:
-    pytest_fixture = lambda f: f # no-op otherwise to prevent pytest import
+    pytest_fixture = lambda f: f  # no-op otherwise to prevent pytest import
 
 
 Escaped = str
+
+
 def escape(command: Command) -> Escaped:
     if isinstance(command, Escaped):
         return command
@@ -116,7 +123,6 @@ def test_wrap() -> None:
     assert wrap(bin_, "-c 'echo whatever'") == "/bin/bash -c 'echo whatever'"
     assert wrap(bin_, ['echo', bin_]) == "/bin/bash echo /bin/bash"
     assert wrap('cat', bin_) == "cat /bin/bash"
-
 
 
 @dataclass(order=True)
@@ -145,6 +151,7 @@ def print_monitor(entries: Iterable[MonitorEntry]) -> None:
 
     import termcolor  # noqa: I001
     import tabulate
+
     tabulate.PRESERVE_WHITESPACE = True
 
     headers = [
@@ -170,5 +177,5 @@ def print_monitor(entries: Iterable[MonitorEntry]) -> None:
                 next=termcolor.colored('running', 'yellow'),
                 left='--',
             )
-        items.append(list(asdict(e).values())[:len(headers)])
+        items.append(list(asdict(e).values())[: len(headers)])
     print(tabulate.tabulate(items, headers=headers))

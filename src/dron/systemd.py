@@ -5,14 +5,14 @@ import os
 import re
 import shlex
 import shutil
-from datetime import datetime, timedelta, timezone
+from collections.abc import Iterator, Sequence
+from datetime import UTC, datetime, timedelta
 from functools import lru_cache
 from itertools import groupby
 from pathlib import Path
 from subprocess import PIPE, Popen, run
 from tempfile import TemporaryDirectory
-from typing import Any, Iterator, Sequence
-
+from typing import Any
 from zoneinfo import ZoneInfo
 
 from .api import (
@@ -81,11 +81,11 @@ WantedBy=timers.target
 # TODO add Restart=always and RestartSec?
 # TODO allow to pass extra args
 def service(
-        *,
-        unit_name: str,
-        command: Command,
-        on_failure: Sequence[OnFailureAction],
-        **kwargs: str,
+    *,
+    unit_name: str,
+    command: Command,
+    on_failure: Sequence[OnFailureAction],
+    **kwargs: str,
 ) -> str:
     # TODO not sure if something else needs to be escaped for ExecStart??
     # todo systemd-escape? but only can be used for names
@@ -95,15 +95,10 @@ def service(
     # https://unix.stackexchange.com/a/441662/180307
     cmd = escape(command)
 
-    exec_stop_posts = [
-        f"ExecStopPost=/bin/sh -c 'if [ $$EXIT_STATUS != 0 ]; then {action}; fi'"
-        for action in on_failure
-    ]
+    exec_stop_posts = [f"ExecStopPost=/bin/sh -c 'if [ $$EXIT_STATUS != 0 ]; then {action}; fi'" for action in on_failure]
 
     sections: dict[str, list[str]] = {}
-    sections['[Unit]'] = [f'''
-Description=Service for {unit_name} {MANAGED_MARKER}
-'''.strip()]
+    sections['[Unit]'] = [f'Description=Service for {unit_name} {MANAGED_MARKER}']
 
     sections['[Service]'] = [
         f'ExecStart={cmd}',
@@ -188,40 +183,48 @@ def test_verify_systemd() -> None:
     skip_if_no_systemd()
     from .dron import verify_unit
 
-    def fails(body: str) -> None:
+    def FAILS(body: str) -> None:
         import pytest
+
         with pytest.raises(Exception):
             verify_unit(unit_name='whatever.service', body=body)
 
-    def ok(body: str) -> None:
+    def OK(body: str) -> None:
         verify_unit(unit_name='ok.service', body=body)
 
-    ok(body='''
+    OK(
+        body='''
 [Service]
 ExecStart=/bin/echo 123
-''')
+'''
+    )
 
     from .api import notify
+
     on_failure = (
         notify.email('test@gmail.com'),
         notify.desktop_notification,
     )
-    ok(body=service(unit_name='alala', command='/bin/echo 123', on_failure=on_failure))
+    OK(body=service(unit_name='alala', command='/bin/echo 123', on_failure=on_failure))
 
     # garbage
-    fails(body='fewfewf')
+    FAILS(body='fewfewf')
 
     # no execstart
-    fails(body='''
+    FAILS(
+        body='''
 [Service]
 StandardOutput=journal
-''')
+'''
+    )
 
-    fails(body='''
+    FAILS(
+        body='''
 [Service]
 ExecStart=yes
 StandardOutput=baaad
-''')
+'''
+    )
 
 
 def _sd(s: str) -> str:
@@ -235,6 +238,7 @@ class BusManager:
             Interface,
             SessionBus,
         )
+
         self.Interface = Interface  # meh
 
         self.bus = SessionBus()  # note: SystemBus is for system-wide services
@@ -261,7 +265,7 @@ def systemd_state(*, with_body: bool) -> State:
     states = bus.manager.ListUnits()  # ok nice, it's basically instant
 
     for state in states:
-        name  = state[0]
+        name = state[0]
         descr = state[1]
         if not is_managed(descr):
             continue
@@ -276,7 +280,7 @@ def systemd_state(*, with_body: bool) -> State:
         unit_file = Path(str(bus.prop(props, '.Unit', 'FragmentPath'))).resolve()
         body = unit_file.read_text() if with_body else None
         cmdline: Sequence[str] | None
-        if '.timer' in name: # meh
+        if '.timer' in name:  # meh
             cmdline = None
         else:
             cmdline = BusManager.exec_start(props)
@@ -302,22 +306,23 @@ def test_managed_units() -> None:
 
 def skip_if_no_systemd() -> None:
     import pytest
+
     reason = _is_missing_systemd()
     if reason is not None:
         pytest.skip(f'No systemd: {reason}')
 
 
-_UTCMAX = datetime.max.replace(tzinfo=timezone.utc)
+_UTCMAX = datetime.max.replace(tzinfo=UTC)
 
 
 class MonitorHelper:
     def from_usec(self, usec) -> datetime_aware:
         u = int(usec)
-        if u == 2 ** 64 - 1: # apparently systemd uses max uint64
+        if u == 2**64 - 1:  # apparently systemd uses max uint64
             # happens if the job is running ATM?
             return _UTCMAX
         else:
-            return datetime.fromtimestamp(u / 10 ** 6, tz=timezone.utc)
+            return datetime.fromtimestamp(u / 10**6, tz=UTC)
 
     @property
     @lru_cache  # noqa: B019
@@ -326,19 +331,19 @@ class MonitorHelper:
             # it's a required dependency, but still might fail in some weird environments?
             #   e.g. if zoneinfo information isn't available
             from tzlocal import get_localzone
+
             return get_localzone()
-        except Exception as e:
+        except Exception:
             logger.error("Couldn't determine local timezone! Falling back to UTC")
             return ZoneInfo('UTC')
 
 
 def get_entries_for_monitor(managed: State, *, params: MonitorParams) -> list[MonitorEntry]:
     # TODO reorder timers and services so timers go before?
-    sd = lambda s: f'org.freedesktop.systemd1{s}'
 
     mon = MonitorHelper()
 
-    UTCNOW = datetime.now(tz=timezone.utc)
+    UTCNOW = datetime.now(tz=UTC)
 
     bus = BusManager()
 
@@ -359,12 +364,12 @@ def get_entries_for_monitor(managed: State, *, params: MonitorParams) -> list[Mo
 
         if timer is not None:
             props = bus.properties(timer)
-            cal   = bus.prop(props, '.Timer', 'TimersCalendar')
+            cal = bus.prop(props, '.Timer', 'TimersCalendar')
             next_ = bus.prop(props, '.Timer', 'NextElapseUSecRealtime')
 
             unit_props = bus.properties(service)
             # note: there is also bus.prop(props, '.Timer', 'LastTriggerUSec'), but makes more sense to use unit to account for manual runs
-            last  = bus.prop(unit_props, '.Unit', 'ActiveExitTimestamp')
+            last = bus.prop(unit_props, '.Unit', 'ActiveExitTimestamp')
 
             schedule = cal[0][1]  # TODO is there a more reliable way to retrieve it??
             # todo not sure if last is really that useful..
@@ -376,9 +381,9 @@ def get_entries_for_monitor(managed: State, *, params: MonitorParams) -> list[Mo
             if next_dt == datetime.max:
                 left_delta = timedelta(0)
             else:
-                left_delta   = next_dt - UTCNOW
+                left_delta = next_dt - UTCNOW
         else:
-            left_delta = timedelta(0) # TODO
+            left_delta = timedelta(0)  # TODO
             last_dt = UTCNOW
             nexts = 'n/a'
             schedule = 'always'
@@ -390,17 +395,17 @@ def get_entries_for_monitor(managed: State, *, params: MonitorParams) -> list[Mo
             # get rid of microseconds
             ad = ad - timedelta(microseconds=ad.microseconds)
 
-            day    = timedelta(days=1)
-            hour   = timedelta(hours=1)
+            day = timedelta(days=1)
+            hour = timedelta(hours=1)
             minute = timedelta(minutes=1)
             gt = False
             if ad > day:
-                full_days  = ad // day
+                full_days = ad // day
                 hours = (ad % day) // hour
                 ads = f'{full_days}d {hours}h'
                 gt = True
             elif ad > minute:
-                full_mins  = ad // minute
+                full_mins = ad // minute
                 ad = timedelta(minutes=full_mins)
                 ads = str(ad)
                 gt = True
@@ -408,14 +413,13 @@ def get_entries_for_monitor(managed: State, *, params: MonitorParams) -> list[Mo
                 # show exact
                 ads = str(ad)
             if len(ads) == 7:
-                ads = '0' + ads # meh. fix missing leading zero in hours..
+                ads = '0' + ads  # meh. fix missing leading zero in hours..
             ads = ('>' if gt else '') + ads
             return ads
 
-
-        left   = f'{fmt_delta(left_delta)!s:<9}'
+        left = f'{fmt_delta(left_delta)!s:<9}'
         if last_dt.timestamp() == 0:
-            ago = 'never' # TODO yellow?
+            ago = 'never'  # TODO yellow?
         else:
             passed_delta = UTCNOW - last_dt
             ago = str(fmt_delta(passed_delta))
@@ -429,7 +433,7 @@ def get_entries_for_monitor(managed: State, *, params: MonitorParams) -> list[Mo
         assert exec_start is not None, service  # not None for services
         command = ' '.join(map(shlex.quote, exec_start)) if params.with_command else None
         _pid: int | None = int(bus.prop(props, '.Service', 'MainPID'))
-        pid  = None if _pid == 0 else str(_pid)
+        pid = None if _pid == 0 else str(_pid)
 
         if params.with_success_rate:
             rate = _unit_success_rate(service)
@@ -440,37 +444,42 @@ def get_entries_for_monitor(managed: State, *, params: MonitorParams) -> list[Mo
         status_ok = result == 'success'
         status = f'{result:<9} {ago:<8}{rates}'
 
-        entries.append(MonitorEntry(
-            unit=k,
-            status=status,
-            left=left,
-            next=nexts,
-            schedule=schedule,
-            command=command,
-            pid=pid,
-            status_ok=status_ok,
-        ))
+        entries.append(
+            MonitorEntry(
+                unit=k,
+                status=status,
+                left=left,
+                next=nexts,
+                schedule=schedule,
+                command=command,
+                pid=pid,
+                status_ok=status_ok,
+            )
+        )
     return entries
 
 
 Json = dict[str, Any]
+
+
 def _unit_logs(unit: Unit) -> Iterator[Json]:
     # TODO so do I need to parse logs to get failure stats? perhaps json would be more reliable
     cmd = f'journalctl --user -u {unit} -o json -t systemd --output-fields UNIT_RESULT,JOB_TYPE,MESSAGE'
     with Popen(cmd.split(), stdout=PIPE) as po:
-        stdout = po.stdout; assert stdout is not None
+        stdout = po.stdout
+        assert stdout is not None
         for line in stdout:
             j = json.loads(line.decode('utf8'))
             # apparently, successful runs aren't getting logged? not sure why
-            jt = j.get('JOB_TYPE')
-            ur = j.get('UNIT_RESULT')
+            # jt = j.get('JOB_TYPE')
+            # ur = j.get('UNIT_RESULT')
             # not sure about this..
             yield j
 
 
 def _unit_success_rate(unit: Unit) -> float:
     started = 0
-    failed  = 0
+    failed = 0
     # TODO not sure how much time it takes to query all journals?
     for j in _unit_logs(unit):
         jt = j.get('JOB_TYPE')
