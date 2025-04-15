@@ -48,6 +48,11 @@ class UnitState:
 
 
 @dataclass
+class SystemdUnitState(UnitState):
+    dbus_properties: Any  # seems like keeping this around massively speeds up dbus access...
+
+
+@dataclass
 class LaunchdUnitState(UnitState):
     # NOTE: can legit be str (e.g. if unit was never ran before)
     last_exit_code: str | None
