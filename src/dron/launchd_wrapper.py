@@ -2,9 +2,10 @@
 import argparse
 import shlex
 import sys
+from collections.abc import Iterator
 from pathlib import Path
 from subprocess import PIPE, STDOUT, Popen
-from typing import Iterator, NoReturn
+from typing import NoReturn
 
 from loguru import logger
 
@@ -49,7 +50,6 @@ def main() -> NoReturn:
         logger.exception(e)
         captured_log.append(str(e).encode('utf8'))
         rc = 123
-
 
     def payload() -> Iterator[bytes]:
         yield f"exit code: {rc}\n".encode()

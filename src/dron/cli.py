@@ -66,7 +66,7 @@ def jobs():
 
         orig_mtime = tpath.stat().st_mtime
         while True:
-            res = subprocess.run([editor, str(tpath)], check=True)
+            subprocess.run([editor, str(tpath)], check=True)
 
             new_mtime = tpath.stat().st_mtime
             if new_mtime == orig_mtime:
@@ -263,7 +263,7 @@ I elaborate on what led me to implement it and motivation [[https://beepb00p.xyz
     ###
 
     ### actions on managed jobs
-    debug_parser = sp.add_parser('debug', help='Print some debug info')
+    _debug_parser = sp.add_parser('debug', help='Print some debug info')
 
     uninstall_parser = sp.add_parser('uninstall', help="Uninstall all managed jobs")
     add_verify(uninstall_parser)
