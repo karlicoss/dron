@@ -258,14 +258,14 @@ def launchd_state(*, with_body: bool) -> Iterator[LaunchdUnitState]:
                 periodic_schedule = extras.get('run interval')
                 calendal_schedule = 'com.apple.launchd.calendarinterval' in unwrap(all_props)
 
-                schedule: str | None = None
+                schedule: str | None
                 if periodic_schedule is not None:
                     schedule = 'every ' + periodic_schedule
                 elif calendal_schedule:
                     # TODO parse properly
                     schedule = 'calendar'
                 else:
-                    # NOTE: seems like keepalive attribute isn't present in launcd dumpstate output
+                    # NOTE: seems like keepalive attribute isn't present in launchd dumpstate output
                     schedule = 'always'
 
                 yield LaunchdUnitState(

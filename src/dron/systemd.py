@@ -26,9 +26,9 @@ from .common import (
     MonitorEntry,
     MonitorParams,
     State,
+    SystemdUnitState,
     TimerSpec,
     Unit,
-    UnitState,
     datetime_aware,
     escape,
     is_managed,
@@ -275,8 +275,10 @@ def systemd_state(*, with_body: bool) -> State:
 
         # useful for debugging, can also use .Service if it's not a timer
         # all_properties = props.GetAll(_sd('.Unit'))
+        # however GetAll seems slower than gettind individual properties
 
         # stale = int(bus.prop(props, '.Unit', 'NeedDaemonReload')) == 1
+        # TODO do we actually need to resolve?
         unit_file = Path(str(bus.prop(props, '.Unit', 'FragmentPath'))).resolve()
         body = unit_file.read_text() if with_body else None
         cmdline: Sequence[str] | None
@@ -285,7 +287,7 @@ def systemd_state(*, with_body: bool) -> State:
         else:
             cmdline = BusManager.exec_start(props)
 
-        yield UnitState(unit_file=unit_file, body=body, cmdline=cmdline)
+        yield SystemdUnitState(unit_file=unit_file, body=body, cmdline=cmdline, dbus_properties=props)
 
 
 def test_managed_units() -> None:
@@ -338,9 +340,37 @@ class MonitorHelper:
             return ZoneInfo('UTC')
 
 
-def get_entries_for_monitor(managed: State, *, params: MonitorParams) -> list[MonitorEntry]:
-    # TODO reorder timers and services so timers go before?
+# TODO maybe format seconds prettier. dunno
+def _fmt_delta(d: timedelta) -> str:
+    # format to reduce constant countdown...
+    ad = abs(d)
+    # get rid of microseconds
+    ad = ad - timedelta(microseconds=ad.microseconds)
 
+    day = timedelta(days=1)
+    hour = timedelta(hours=1)
+    minute = timedelta(minutes=1)
+    gt = False
+    if ad > day:
+        full_days = ad // day
+        hours = (ad % day) // hour
+        ads = f'{full_days}d {hours}h'
+        gt = True
+    elif ad > minute:
+        full_mins = ad // minute
+        ad = timedelta(minutes=full_mins)
+        ads = str(ad)
+        gt = True
+    else:
+        # show exact
+        ads = str(ad)
+    if len(ads) == 7:
+        ads = '0' + ads  # meh. fix missing leading zero in hours..
+    ads = ('>' if gt else '') + ads
+    return ads
+
+
+def get_entries_for_monitor(managed: State, *, params: MonitorParams) -> list[MonitorEntry]:
     mon = MonitorHelper()
 
     UTCNOW = datetime.now(tz=UTC)
@@ -348,13 +378,20 @@ def get_entries_for_monitor(managed: State, *, params: MonitorParams) -> list[Mo
     bus = BusManager()
 
     entries: list[MonitorEntry] = []
-    names = sorted(s.unit_file.name for s in managed)
-    uname = lambda full: full.split('.')[0]
-    for k, _gr in groupby(names, key=uname):
-        gr = list(_gr)
+
+    # sort so that neigbouring unit.service/unit.timer go one after another for grouping
+    sort_key = lambda unit: unit.unit_file.name
+    # for grouping, group by common stem of timers and services
+    stem_name = lambda unit: sort_key(unit).split('.')[0]
+    for k, _gr in groupby(sorted(managed, key=sort_key), key=stem_name):
+        gr: list[SystemdUnitState] = []
+        for x in _gr:
+            assert isinstance(x, SystemdUnitState), x  # guaranteed by managed_units function
+            gr.append(x)
+
         # if timer is None, guess that means the job is always running?
-        timer: str | None
-        service: str
+        timer: SystemdUnitState | None
+        service: SystemdUnitState
         if len(gr) == 2:
             [service, timer] = gr
         else:
@@ -362,14 +399,16 @@ def get_entries_for_monitor(managed: State, *, params: MonitorParams) -> list[Mo
             [service] = gr
             timer = None
 
+        service_props = service.dbus_properties
+
         if timer is not None:
-            props = bus.properties(timer)
+            props = timer.dbus_properties
+            # FIXME this might be io bound? maybe make async or use thread pool?
             cal = bus.prop(props, '.Timer', 'TimersCalendar')
             next_ = bus.prop(props, '.Timer', 'NextElapseUSecRealtime')
 
-            unit_props = bus.properties(service)
             # note: there is also bus.prop(props, '.Timer', 'LastTriggerUSec'), but makes more sense to use unit to account for manual runs
-            last = bus.prop(unit_props, '.Unit', 'ActiveExitTimestamp')
+            last = bus.prop(service_props, '.Unit', 'ActiveExitTimestamp')
 
             schedule = cal[0][1]  # TODO is there a more reliable way to retrieve it??
             # todo not sure if last is really that useful..
@@ -388,61 +427,33 @@ def get_entries_for_monitor(managed: State, *, params: MonitorParams) -> list[Mo
             nexts = 'n/a'
             schedule = 'always'
 
-        # TODO maybe format seconds prettier. dunno
-        def fmt_delta(d: timedelta) -> str:
-            # format to reduce constant countdown...
-            ad = abs(d)
-            # get rid of microseconds
-            ad = ad - timedelta(microseconds=ad.microseconds)
-
-            day = timedelta(days=1)
-            hour = timedelta(hours=1)
-            minute = timedelta(minutes=1)
-            gt = False
-            if ad > day:
-                full_days = ad // day
-                hours = (ad % day) // hour
-                ads = f'{full_days}d {hours}h'
-                gt = True
-            elif ad > minute:
-                full_mins = ad // minute
-                ad = timedelta(minutes=full_mins)
-                ads = str(ad)
-                gt = True
-            else:
-                # show exact
-                ads = str(ad)
-            if len(ads) == 7:
-                ads = '0' + ads  # meh. fix missing leading zero in hours..
-            ads = ('>' if gt else '') + ads
-            return ads
-
-        left = f'{fmt_delta(left_delta)!s:<9}'
+        left = f'{_fmt_delta(left_delta)!s:<9}'
         if last_dt.timestamp() == 0:
             ago = 'never'  # TODO yellow?
         else:
             passed_delta = UTCNOW - last_dt
-            ago = str(fmt_delta(passed_delta))
+            ago = str(_fmt_delta(passed_delta))
         # TODO instead of hacking microsecond, use 'NOW' or something?
 
-        props = bus.properties(service)
         # TODO some summary too? e.g. how often in failed
-        # TODO make defensive?
-        result = bus.prop(props, '.Service', 'Result')
-        exec_start = BusManager.exec_start(props)
-        assert exec_start is not None, service  # not None for services
-        command = ' '.join(map(shlex.quote, exec_start)) if params.with_command else None
-        _pid: int | None = int(bus.prop(props, '.Service', 'MainPID'))
+        if params.with_command:
+            exec_start = service.cmdline
+            assert exec_start is not None, service  # not None for services
+            command = shlex.join(exec_start)
+        else:
+            command = None
+        _pid: int | None = int(bus.prop(service_props, '.Service', 'MainPID'))
         pid = None if _pid == 0 else str(_pid)
 
         if params.with_success_rate:
-            rate = _unit_success_rate(service)
+            rate = _unit_success_rate(service.unit_file.name)
             rates = f' {rate:.2f}'
         else:
             rates = ''
 
-        status_ok = result == 'success'
-        status = f'{result:<9} {ago:<8}{rates}'
+        service_result = bus.prop(service_props, '.Service', 'Result')
+        status_ok = service_result == 'success'
+        status = f'{service_result:<9} {ago:<8}{rates}'
 
         entries.append(
             MonitorEntry(
