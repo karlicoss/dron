@@ -1,13 +1,9 @@
 from __future__ import annotations
 
 import argparse
-import os
-import shutil
-import subprocess
+import socket
 import sys
-from pathlib import Path
 from pprint import pprint
-from tempfile import TemporaryDirectory
 
 import click
 
@@ -23,10 +19,8 @@ from .common import (
     print_monitor,
 )
 from .dron import (
-    DRONTAB,
     apply,
     do_lint,
-    drontab_dir,
     get_entries_for_monitor,
     load_jobs,
     manage,
@@ -34,83 +28,16 @@ from .dron import (
 )
 
 
-def cmd_edit() -> None:
-    drontab = DRONTAB
-    if not drontab.exists():
-        if click.confirm(f"tabfile {drontab} doesn't exist. Create?", default=True):
-            drontab.write_text(
-                '''\
-#!/usr/bin/env python3
-from dron.api import job
-
-def jobs():
-    # yield job(
-    #     'hourly',
-    #     '/bin/echo 123',
-    #     unit_name='test_unit'
-    # )
-    pass
-'''.lstrip()
-            )
-        else:
-            raise RuntimeError()
-
-    editor = os.environ.get('EDITOR')
-    if editor is None:
-        logger.warning('No EDITOR! Fallback to nano')
-        editor = 'nano'
-
-    with TemporaryDirectory() as tdir:
-        tpath = Path(tdir) / 'drontab'
-        shutil.copy2(drontab, tpath)
-
-        orig_mtime = tpath.stat().st_mtime
-        while True:
-            subprocess.run([editor, str(tpath)], check=True)
-
-            new_mtime = tpath.stat().st_mtime
-            if new_mtime == orig_mtime:
-                logger.warning('No notification made')
-                return
-
-            ex: Exception | None = None
-            try:
-                state = do_lint(tabfile=tpath)
-            except Exception as e:
-                logger.exception(e)
-                ex = e
-            else:
-                try:
-                    manage(state=state)
-                except Exception as ee:
-                    logger.exception(ee)
-                    ex = ee
-            if ex is not None:
-                if click.confirm('Got errors. Try again?', default=True):
-                    continue
-                raise ex
-
-            drontab.write_text(tpath.read_text())  # handles symlinks correctly
-            logger.info(f"Wrote changes to {drontab}. Don't forget to commit!")
-            break
-
-        # TODO show git diff?
-        # TODO perhaps allow to carry on regardless? not sure..
-        # not sure how much we can do without modifying anything...
-
-
-def cmd_lint(tabfile: Path) -> None:
-    _state = do_lint(tabfile)
+def cmd_lint(tab_module: str) -> None:
+    # FIXME lint command isn't very interesting now btw?
+    # perhaps instead, either add dry mode to apply
+    # or split into the 'diff' part and side effect apply part
+    _state = do_lint(tab_module)
     logger.info('all good')
 
 
-def cmd_apply(tabfile: Path) -> None:
-    apply(tabfile)
-
-
-def cmd_print(*, tabfile: Path, pretty: bool) -> None:
-    dtab_dir = Path(drontab_dir())
-    jobs = list(load_jobs(tabfile=tabfile, ppath=dtab_dir))
+def cmd_print(*, tab_module: str, pretty: bool) -> None:
+    jobs = list(load_jobs(tab_module=tab_module))
 
     if pretty:
         import tabulate
@@ -240,25 +167,22 @@ I elaborate on what led me to implement it and motivation [[https://beepb00p.xyz
         '--marker', required=False, help=f'Use custom marker instead of default `{MANAGED_MARKER}`. Useful for developing/testing.'
     )
 
-    def add_tabfile_arg(p: argparse.ArgumentParser) -> None:
-        p.add_argument('tabfile', type=Path, nargs='?')
+    def add_tab_module_arg(p: argparse.ArgumentParser) -> None:
+        p.add_argument('tab_module', type=str, nargs='?')
 
     sp = p.add_subparsers(dest='mode')
 
     ### actions on drontab file
-    edit_parser = sp.add_parser('edit', help="Edit drontab (like 'crontab -e')")
-    add_verify(edit_parser)
-
     apply_parser = sp.add_parser('apply', help="Apply drontab (like 'crontab' with no args)")
-    add_tabfile_arg(apply_parser)
+    add_tab_module_arg(apply_parser)
     add_verify(apply_parser)
     # TODO --force?
     lint_parser = sp.add_parser('lint', help="Check drontab (no 'crontab' alternative, sadly!)")
-    add_tabfile_arg(lint_parser)
+    add_tab_module_arg(lint_parser)
     add_verify(lint_parser)
 
     print_parser = sp.add_parser('print', help="Parse and print drontab")
-    add_tabfile_arg(print_parser)
+    add_tab_module_arg(print_parser)
     print_parser.add_argument('--pretty', action='store_true')
     ###
 
@@ -300,11 +224,12 @@ def main() -> None:
 
     mode: str = args.mode
 
-    def tabfile_or_default() -> Path:
-        tabfile = args.tabfile
-        if tabfile is None:
-            tabfile = DRONTAB
-        return tabfile
+    def get_tab_module() -> str:
+        tab_module = args.tab_module
+        if tab_module is not None:
+            return tab_module
+        # TODO document this?
+        return f'drontab.{socket.gethostname()}'
 
     def prompt_for_unit() -> UnitName:
         from prompt_toolkit import PromptSession
@@ -323,35 +248,22 @@ def main() -> None:
         selected = session.prompt()
         return selected
 
-    if mode == 'edit':
-        cmd_edit()
-    elif mode == 'apply':
-        tabfile = tabfile_or_default()
-        cmd_apply(tabfile)
+    if mode == 'apply':
+        tab_module = get_tab_module()
+        apply(tab_module)
     elif mode == 'lint':
-        tabfile = tabfile_or_default()
-        cmd_lint(tabfile)
+        tab_module = get_tab_module()
+        cmd_lint(tab_module)
     elif mode == 'print':
-        tabfile = tabfile_or_default()
-
-        from .cli import cmd_print  # lazy due to circular import
-
-        cmd_print(tabfile=tabfile, pretty=args.pretty)
+        tab_module = get_tab_module()
+        cmd_print(tab_module=tab_module, pretty=args.pretty)
     elif mode == 'debug':
         managed = managed_units(with_body=False)  # TODO not sure about body
         for x in managed:
             pprint(x, stream=sys.stderr)
     elif mode == 'uninstall':
         click.confirm('Going to remove all dron managed jobs. Continue?', default=True, abort=True)
-        with TemporaryDirectory() as td:
-            empty = Path(td) / 'empty'
-            empty.write_text(
-                '''\
-def jobs():
-    yield from []
-'''
-            )
-            cmd_apply(empty)
+        manage([])
     elif mode == 'run':
         unit = args.unit if args.unit is not None else prompt_for_unit()
         do_exec = args.do_exec

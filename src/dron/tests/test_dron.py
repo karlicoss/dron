@@ -1,14 +1,27 @@
 from __future__ import annotations
 
+import sys
+from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
 
-from ..dron import load_jobs
+from ..dron import do_lint, load_jobs
 
 
-def test_load_jobs_basic(tmp_path: Path) -> None:
-    tpath = Path(tmp_path) / 'drontab.py'
+@pytest.fixture
+def tmp_pythonpath(tmp_path: Path) -> Iterator[Path]:
+    ps = str(tmp_path)
+    assert ps not in sys.path  # just in case
+    sys.path.insert(0, ps)
+    try:
+        yield tmp_path
+    finally:
+        sys.path.remove(ps)
+
+
+def test_load_jobs_basic(tmp_pythonpath: Path) -> None:
+    tpath = Path(tmp_pythonpath) / 'test_drontab.py'
     tpath.write_text(
         '''
 from typing import Iterator
@@ -37,7 +50,7 @@ def jobs() -> Iterator[Job]:
 
 '''
     )
-    loaded = list(load_jobs(tabfile=tpath, ppath=tmp_path))
+    loaded = list(load_jobs(tab_module='test_drontab'))
     [job1, job2, job3] = loaded
 
     assert job1.when == '01:10'
@@ -53,8 +66,8 @@ def jobs() -> Iterator[Job]:
     assert job3.unit_name == 'job3'
 
 
-def test_load_jobs_dupes(tmp_path: Path) -> None:
-    tpath = Path(tmp_path) / 'drontab.py'
+def test_load_jobs_dupes(tmp_pythonpath: Path) -> None:
+    tpath = Path(tmp_pythonpath) / 'test_drontab.py'
     tpath.write_text(
         '''
 from typing import Iterator
@@ -69,11 +82,11 @@ def jobs() -> Iterator[Job]:
 '''
     )
     with pytest.raises(AssertionError):
-        _loaded = list(load_jobs(tabfile=tpath, ppath=tmp_path))
+        _loaded = list(load_jobs(tab_module='test_drontab'))
 
 
-def test_jobs_auto_naming(tmp_path: Path) -> None:
-    tpath = Path(tmp_path) / 'drontab.py'
+def test_jobs_auto_naming(tmp_pythonpath: Path) -> None:
+    tpath = Path(tmp_pythonpath) / 'test_drontab.py'
     tpath.write_text(
         '''
 from typing import Iterator
@@ -105,7 +118,7 @@ def jobs() -> Iterator[Job]:
     yield job4
 '''
     )
-    loaded = list(load_jobs(tabfile=tpath, ppath=tmp_path))
+    loaded = list(load_jobs(tab_module='test_drontab'))
     (job2, job_named, job_1, job5, job4) = loaded
     assert job_1.unit_name == 'job_1'
     assert job_1.when == '00:01'
@@ -117,3 +130,57 @@ def jobs() -> Iterator[Job]:
     assert job4.when == '00:04'
     assert job5.unit_name == 'job5'
     assert job5.when == '00:05'
+
+
+def test_do_lint(tmp_pythonpath: Path) -> None:
+    def OK(body: str) -> None:
+        tpath = Path(tmp_pythonpath) / 'test_drontab.py'
+        tpath.write_text(body)
+        do_lint(tab_module='test_drontab')
+
+    def FAILS(body: str) -> None:
+        with pytest.raises(Exception):
+            OK(body)
+
+    FAILS(
+        body='''
+    None.whatever
+    '''
+    )
+
+    # no jobs
+    FAILS(
+        body='''
+    '''
+    )
+
+    OK(
+        body='''
+def jobs():
+    yield from []
+'''
+    )
+
+    OK(
+        body='''
+from dron.api import job
+def jobs():
+    yield job(
+        'hourly',
+        ['/bin/echo', '123'],
+        unit_name='unit_test',
+    )
+'''
+    )
+
+    from ..systemd import _is_missing_systemd
+
+    if not _is_missing_systemd():
+        from ..cli import _drontab_example
+
+        # this test doesn't work without systemd yet, because launchd adapter doesn't support unquoted commands, at least yet..
+        example = _drontab_example()
+        # ugh. some hackery to make it find the executable..
+        echo = " '/bin/echo"
+        example = example.replace(" 'linkchecker", echo).replace(" '/home/user/scripts/run-borg", echo).replace(" 'ping", " '/bin/ping")
+        OK(body=example)
