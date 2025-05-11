@@ -1,16 +1,14 @@
 from __future__ import annotations
 
 import importlib.util
-import os
-import shlex
 import sys
 from collections import OrderedDict
 from collections.abc import Iterable, Iterator
+from concurrent.futures import ProcessPoolExecutor
 from difflib import unified_diff
 from itertools import tee
 from pathlib import Path
-from subprocess import check_call, run
-from tempfile import TemporaryDirectory
+from subprocess import check_call
 from typing import NamedTuple
 
 import click
@@ -34,9 +32,6 @@ from .systemd import _systemctl
 DRON_DIR = Path('~/.config/dron').expanduser()
 DRON_UNITS_DIR = DRON_DIR / 'units'
 DRON_UNITS_DIR.mkdir(parents=True, exist_ok=True)
-
-
-DRONTAB = DRON_DIR / 'drontab.py'
 
 
 def verify_units(pre_units: list[tuple[UnitName, Body]]) -> None:
@@ -303,44 +298,14 @@ Error = str
 
 
 # eh, implicit convention that only one state will be emitted. oh well
-def lint(tabfile: Path) -> Iterator[Exception | State]:
-    linters = [
-        [sys.executable, '-m', 'mypy', '--no-incremental', '--check-untyped', str(tabfile)],
-    ]
-
-    ldir = tabfile.parent
-    # TODO not sure if should always lint in temporary dir to prevent turds?
-
-    dtab_dir = drontab_dir()
-
-    # meh.
-    def extra_path(variable: str, path: str, env) -> dict[str, str]:
-        vv = env.get(variable)
-        pp = path + ('' if vv is None else ':' + vv)
-        return {**env, variable: pp}
-
-    errors = []
-    for l in linters:
-        logger.info(f'Running: {shlex.join(l)}')
-        with TemporaryDirectory():  # TODO why do I use temporary dir here?
-            env = {**os.environ}
-            env = extra_path('MYPYPATH', dtab_dir, env)
-
-            r = run(l, cwd=str(ldir), env=env, check=False)
-        if r.returncode == 0:
-            logger.info('OK')
-            continue
-        else:
-            logger.error(f'FAIL: code: {r.returncode}')
-            errors.append('error')
-    if len(errors) > 0:
-        yield RuntimeError('Python linting failed!')
-        return
-
-    # TODO just add options to skip python lint? so it always goes through same code paths
+# FIXME rename from lint? just use compileall or something as a syntax check?
+def lint(tab_module: str) -> Iterator[Exception | State]:
+    # TODO tbh compileall is pointless
+    # - we can't find out source names property without importing
+    # - we'll find out about errors during importing anyway
 
     try:
-        jobs = load_jobs(tabfile=tabfile, ppath=Path(dtab_dir))
+        jobs = load_jobs(tab_module)
     except Exception as e:
         # TODO could add better logging here? 'i.e. error while loading jobs'
         logger.exception(e)
@@ -357,64 +322,8 @@ def lint(tabfile: Path) -> Iterator[Exception | State]:
     yield state
 
 
-def test_do_lint(tmp_path: Path) -> None:
-    import pytest
-
-    def OK(body: str) -> None:
-        tpath = Path(tmp_path) / 'drontab.py'
-        tpath.write_text(body)
-        do_lint(tabfile=tpath)
-
-    def FAILS(body: str) -> None:
-        with pytest.raises(Exception):
-            OK(body)
-
-    FAILS(
-        body='''
-    None.whatever
-    '''
-    )
-
-    # no jobs
-    FAILS(
-        body='''
-    '''
-    )
-
-    OK(
-        body='''
-def jobs():
-    yield from []
-'''
-    )
-
-    OK(
-        body='''
-from dron.api import job
-def jobs():
-    yield job(
-        'hourly',
-        ['/bin/echo', '123'],
-        unit_name='unit_test',
-    )
-'''
-    )
-
-    from .systemd import _is_missing_systemd
-
-    if not _is_missing_systemd():
-        from .cli import _drontab_example
-
-        # this test doesn't work without systemd yet, because launchd adapter doesn't support unquoted commands, at least yet..
-        example = _drontab_example()
-        # ugh. some hackery to make it find the executable..
-        echo = " '/bin/echo"
-        example = example.replace(" 'linkchecker", echo).replace(" '/home/user/scripts/run-borg", echo).replace(" 'ping", " '/bin/ping")
-        OK(body=example)
-
-
-def do_lint(tabfile: Path) -> State:
-    eit, vit = tee(lint(tabfile))
+def do_lint(tab_module: str) -> State:
+    eit, vit = tee(lint(tab_module))
     errors = [r for r in eit if isinstance(r, Exception)]
     values = [r for r in vit if not isinstance(r, Exception)]
     assert len(errors) == 0, errors
@@ -422,35 +331,28 @@ def do_lint(tabfile: Path) -> State:
     return state
 
 
-def drontab_dir() -> str:
-    # meeh
-    return str(DRONTAB.resolve().absolute().parent)
+def _import_jobs(tab_module: str) -> list[Job]:
+    module = importlib.import_module(tab_module)
+    return list(module.jobs())
 
 
-def load_jobs(tabfile: Path, ppath: Path) -> Iterator[Job]:
-    pp = str(ppath)
-    sys.path.insert(0, pp)
-    try:
-        spec = importlib.util.spec_from_file_location(tabfile.name, tabfile)
-        assert spec is not None, tabfile
-        loader = spec.loader
-        assert loader is not None, (tabfile, spec)
-        module = importlib.util.module_from_spec(spec)
-        loader.exec_module(module)
-    finally:
-        sys.path.remove(pp)  # extremely meh..
+def load_jobs(tab_module: str) -> Iterator[Job]:
+    # actually import in a separate process to avoid mess with polluting sys.modules
+    # shouldn't be a problem in most cases, but it was annoying during tests
+    with ProcessPoolExecutor(max_workers=1) as pool:
+        jobs = pool.submit(_import_jobs, tab_module).result()
 
-    jobs = module.jobs
     emitted: dict[str, Job] = {}
-    for job in jobs():
+    for job in jobs:
         assert isinstance(job, Job), job  # just in case for dumb typos
         assert job.unit_name not in emitted, (job, emitted[job.unit_name])
         yield job
         emitted[job.unit_name] = job
 
 
-def apply(tabfile: Path) -> None:
-    state = do_lint(tabfile)
+def apply(tab_module: str) -> None:
+    # TODO rename do_lint to get_state?
+    state = do_lint(tab_module)
     manage(state=state)
 
 

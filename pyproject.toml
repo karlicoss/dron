@@ -37,7 +37,7 @@ notify-telegram = [
     "telegram-send>=0.37",
 ]
 [dependency-groups]
-testing = [
+dev = [
     "pytest",
     "ruff",
     "mypy",
