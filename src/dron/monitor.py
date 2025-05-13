@@ -56,7 +56,7 @@ def as_row(entry: MonitorEntry) -> dict[str, Any]:
 
 
 class MonitorApp(App):
-    def __init__(self, *, monitor_params: MonitorParams, refresh_every: int) -> None:
+    def __init__(self, *, monitor_params: MonitorParams, refresh_every: float) -> None:
         super().__init__()
         self.monitor_params = monitor_params
         self.refresh_every = refresh_every
