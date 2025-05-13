@@ -51,10 +51,12 @@ dron = "dron.__main__:main"
 
 
 [build-system]
-requires = ["setuptools", "setuptools-scm"]
-build-backend = "setuptools.build_meta"
+requires = ["hatchling", "hatch-vcs"]
+build-backend = "hatchling.build"
 
-[tool.setuptools_scm]
-version_scheme = "python-simplified-semver"
-local_scheme = "dirty-tag"
+# unfortunately have to duplicate project name here atm, see https://github.com/pypa/hatch/issues/1894
+[tool.hatch.build.targets.wheel]
+packages = ["src/dron"]
 
+[tool.hatch.version]
+source = "vcs"
