@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import argparse
 import platform
 import shlex
 import sys
@@ -23,10 +22,9 @@ VERIFY_UNITS = True
 # dunno, a bit less atomic though...
 
 
-class VerifyOff(argparse.Action):
-    def __call__(self, parser, namespace, values, option_string=None):  # noqa: ARG002
-        global VERIFY_UNITS
-        VERIFY_UNITS = False
+def set_verify_off() -> None:
+    global VERIFY_UNITS
+    VERIFY_UNITS = False
 
 
 @dataclass

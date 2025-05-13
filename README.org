@@ -1,3 +1,6 @@
+NOTE: readme is a little outdated (although mostly correct).
+Best source of truth is =--help=.
+
 #+begin_src python :results drawer :exports results 
 import dron; return dron.make_parser().description
 #+end_src
