@@ -333,7 +333,8 @@ def do_lint(tab_module: str) -> State:
 
 def _import_jobs(tab_module: str) -> list[Job]:
     module = importlib.import_module(tab_module)
-    return list(module.jobs())
+    jobs_gen = getattr(module, 'jobs')  # get dynamically to make type checking happy
+    return list(jobs_gen())
 
 
 def load_jobs(tab_module: str) -> Iterator[Job]:
