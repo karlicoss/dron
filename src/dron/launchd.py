@@ -85,16 +85,14 @@ def launchctl_reload(*, unit: Unit, unit_file: UnitFile) -> None:
 
 
 def launchd_wrapper(*, job: str, on_failure: list[str]) -> list[str]:
-    # fmt: off
     return [
         sys.executable,
-        '-m',
-        'dron.launchd_wrapper',
+        '-B',  # do not write byte code, otherwise it shits into dron directory if we're using editable install
+        '-m', 'dron.launchd_wrapper',
         *itertools.chain.from_iterable(('--notify', n) for n in on_failure),
         '--job', job,
         '--',
-    ]
-    # fmt: on
+    ]  # fmt: skip
 
 
 def remove_launchd_wrapper(cmd: str) -> str:
