@@ -32,7 +32,7 @@ def main() -> None:
     try:
         send(message=body)
     except Exception as e:
-        logging.exception(e)
+        logging.exception(e)  # noqa: LOG015
         # TODO fallback on email?
         sys.exit(1)
     sys.exit(0)

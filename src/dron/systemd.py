@@ -95,7 +95,9 @@ def service(
     # https://unix.stackexchange.com/a/441662/180307
     cmd = escape(command)
 
-    exec_stop_posts = [f"ExecStopPost=/bin/sh -c 'if [ $$EXIT_STATUS != 0 ]; then {action}; fi'" for action in on_failure]
+    exec_stop_posts = [
+        f"ExecStopPost=/bin/sh -c 'if [ $$EXIT_STATUS != 0 ]; then {action}; fi'" for action in on_failure
+    ]
 
     sections: dict[str, list[str]] = {}
     sections['[Unit]'] = [f'Description=Service for {unit_name} {MANAGED_MARKER}']

@@ -1,6 +1,6 @@
 # see https://github.com/karlicoss/pymplate for up-to-date reference
 [project]
-dynamic = ["version"]  # version is managed by setuptools_scm
+dynamic = ["version"]  # version is managed by build backend
 name = "dron"
 dependencies = [
     "click"         ,  # CLI
@@ -41,9 +41,9 @@ testing = [
     "pytest",
     "ruff",
     "mypy",
-    "lxml",  # for mypy html coverage
-
+    "lxml", # for mypy html coverage
     "types-tabulate",
+    "ty>=0.0.1a22",
 ]
 
 [project.scripts]
@@ -60,3 +60,7 @@ packages = ["src/dron"]
 
 [tool.hatch.version]
 source = "vcs"
+
+[tool.hatch.version.raw-options]
+version_scheme = "python-simplified-semver"
+local_scheme = "dirty-tag"

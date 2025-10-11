@@ -16,7 +16,7 @@ datetime_naive = datetime
 
 
 # TODO can remove this? although might be useful for tests
-VERIFY_UNITS = True
+VERIFY_UNITS: bool = True
 # TODO ugh. verify tries using already installed unit files so if they were bad, everything would fail
 # I guess could do two stages, i.e. units first, then timers
 # dunno, a bit less atomic though...
@@ -82,7 +82,7 @@ ALWAYS = 'always'
 When = OnCalendar | TimerSpec
 
 
-MANAGED_MARKER = '(MANAGED BY DRON)'
+MANAGED_MARKER: str = '(MANAGED BY DRON)'
 
 
 def is_managed(body: str) -> bool:

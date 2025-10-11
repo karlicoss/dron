@@ -1,4 +1,3 @@
-# noqa: A005
 import socket
 from collections.abc import Iterator
 from subprocess import PIPE, Popen

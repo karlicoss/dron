@@ -182,5 +182,9 @@ def jobs():
         example = _drontab_example()
         # ugh. some hackery to make it find the executable..
         echo = " '/bin/echo"
-        example = example.replace(" 'linkchecker", echo).replace(" '/home/user/scripts/run-borg", echo).replace(" 'ping", " '/bin/ping")
+        example = (
+            example.replace(" 'linkchecker", echo)
+            .replace(" '/home/user/scripts/run-borg", echo)
+            .replace(" 'ping", " '/bin/ping")
+        )
         OK(body=example)
