@@ -196,7 +196,7 @@ def apply_state(pending: State) -> None:
         elif isinstance(a, Update):
             _updates.append(a)
         else:
-            raise AssertionError("Can't happen", a)
+            raise TypeError("Can't happen", a)
 
     if len(deletes) == len(current) and len(deletes) > 0:
         msg = "Trying to delete all managed jobs"
