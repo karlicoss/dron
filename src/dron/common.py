@@ -7,7 +7,7 @@ from collections.abc import Iterable, Sequence
 from dataclasses import asdict, dataclass, replace
 from datetime import datetime
 from pathlib import Path
-from typing import Any, TypeVar
+from typing import Any
 
 from loguru import logger  # noqa: F401
 
@@ -64,10 +64,7 @@ State = Iterable[UnitState]
 IS_SYSTEMD = platform.system() != 'Darwin'  # if not systemd it's launchd
 
 
-T = TypeVar('T')
-
-
-def unwrap(x: T | None) -> T:
+def unwrap[T](x: T | None) -> T:
     assert x is not None
     return x
 
@@ -152,8 +149,8 @@ def print_monitor(entries: Iterable[MonitorEntry]) -> None:
         key=lambda e: (e.pid is None, e.status_ok, e),
     )
 
-    import termcolor  # noqa: I001
     import tabulate
+    import termcolor
 
     tabulate.PRESERVE_WHITESPACE = True
 
