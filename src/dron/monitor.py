@@ -62,7 +62,6 @@ class MonitorApp(App):
         self.monitor_params = monitor_params
         self.refresh_every = refresh_every
         self.last_refresh: datetime | None = None
-        self.is_refreshing = False
 
     def compose(self) -> ComposeResult:
         # TODO self.log is already defined?? what is it?
@@ -139,14 +138,11 @@ class MonitorApp(App):
             table.sort(*columns, key=sort_key)
 
         self.last_refresh = datetime.now()
-        self.is_refreshing = False
         self._update_status("Ready")
 
     @work(exclusive=True, thread=True)
     def update_in_background(self) -> None:
-        if not self.is_refreshing:
-            self.is_refreshing = True
-            self.call_from_thread(self._update_status, "Refreshing...")
+        self.call_from_thread(self._update_status, "Refreshing...")
         entries = self.get_entries()
         self.call_from_thread(self.update, entries)
 
