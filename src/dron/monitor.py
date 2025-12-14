@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from dataclasses import asdict, fields
 from datetime import datetime
 from typing import Any, ClassVar, override
@@ -8,7 +9,7 @@ from rich.text import Text
 from textual import work
 from textual.app import App, ComposeResult
 from textual.binding import Binding
-from textual.widgets import DataTable, RichLog, Static
+from textual.widgets import DataTable, Input, RichLog, Static
 from textual.widgets.data_table import RowKey
 
 from .common import MonitorEntry, MonitorParams
@@ -75,6 +76,9 @@ class UnitsTable(DataTable):
         )
         self.params = params
 
+        self.entries: MonitorEntries | None = None
+        self.filter_query: str = ""  # "" means no filter
+
         # todo how to check it statically? MonitorEntry.pid isn't giving anything?
         excluded = {
             'pid',
@@ -107,7 +111,19 @@ class UnitsTable(DataTable):
             res['next'] = Text('running', style='yellow')
         return res
 
-    def update_entries(self, entries: MonitorEntries) -> None:
+    def set_filter(self, query: str) -> None:
+        self.filter_query = query
+        self.update_ui()
+
+    def update_ui(self) -> None:
+        entries = self.entries
+        assert entries is not None
+        # if None then only apply filter to existing data
+        # TODO crap, but then need to keep previous entries
+
+        if len(self.filter_query) > 0:
+            entries = {k: v for k, v in entries.items() if re.search(self.filter_query, v.unit)}  # TODO regex?
+
         current_rows: set[RowKey] = set(self.rows.keys())
 
         to_remove: set[RowKey] = {key for key in current_rows if key not in entries}
@@ -139,8 +155,22 @@ class UnitsTable(DataTable):
         self.sort(key=sort_key)
 
 
+class SearchInput(Input):
+    def __init__(self) -> None:
+        super().__init__(placeholder="Filter units...", id="search")
+
+    def on_input_changed(self, event: Input.Changed) -> None:
+        self.app.query_one(UnitsTable).set_filter(event.value)
+
+    def on_input_submitted(self, event: Input.Submitted) -> None:  # noqa: ARG002
+        if not self.value:
+            self.display = False
+        self.app.query_one(UnitsTable).focus()
+
+
 class MonitorApp(App):
     BINDINGS: ClassVar = [
+        Binding("/", "search", "Search"),
         Binding("q", "quit", "Quit"),
         # Disable default ctrl+q, conflicting with OS/terminal bindings
         Binding("ctrl+q", "pass", show=False, priority=True),
@@ -152,6 +182,10 @@ class MonitorApp(App):
         height: 1;
         background: $primary;
         color: $text;
+    }
+    SearchInput {
+        dock: top;
+        display: none;
     }
     UnitsTable {
         height: 1fr;
@@ -179,8 +213,7 @@ class MonitorApp(App):
     @override
     def compose(self) -> ComposeResult:
         yield Clock()
-
-        # TODO input field to filter out jobs?
+        yield SearchInput()
 
         yield UnitsTable(params=self.monitor_params)
 
@@ -190,6 +223,10 @@ class MonitorApp(App):
     @property
     def clock(self) -> Clock:
         return self.query_one(Clock)
+
+    @property
+    def search_input(self) -> SearchInput:
+        return self.query_one(SearchInput)
 
     @property
     def units_table(self) -> UnitsTable:
@@ -231,7 +268,10 @@ class MonitorApp(App):
         updated_at = datetime.now()
 
         self.rich_log.write(f'{updated_at} UPDATING!')
-        self.units_table.update_entries(entries)
+
+        self.units_table.entries = entries
+        self.units_table.update_ui()
+
         self.clock.update_time(updated_at)
         self.rich_log.write(f'{updated_at} UPDATED!')
 
@@ -240,3 +280,8 @@ class MonitorApp(App):
         else:
             # update as fast as possible
             self._update_entries()
+
+    def action_search(self) -> None:
+        search_input = self.search_input
+        search_input.display = True
+        search_input.focus()
