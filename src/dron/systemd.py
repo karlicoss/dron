@@ -257,7 +257,6 @@ class BusManager:
 
     @staticmethod
     def get_all(obj, schema: str):
-        """Get all properties at once to reduce D-Bus calls."""
         return obj.GetAll(_sd(schema))
 
     @classmethod
@@ -325,7 +324,6 @@ _UTCMAX = datetime.max.replace(tzinfo=UTC)
 
 class MonitorHelper:
     def __init__(self) -> None:
-        # Cache the local timezone on initialization
         self._local_tz: ZoneInfo | None = None
 
     def from_usec(self, usec) -> datetime_aware:
@@ -412,13 +410,11 @@ def get_entries_for_monitor(managed: State, *, params: MonitorParams) -> list[Mo
 
         service_props = service.dbus_properties
 
-        # Fetch all service properties at once to reduce D-Bus calls
         service_unit_props = bus.get_all(service_props, '.Unit')
         service_service_props = bus.get_all(service_props, '.Service')
 
         if timer is not None:
             props = timer.dbus_properties
-            # Fetch all timer properties at once to reduce D-Bus calls
             timer_props = bus.get_all(props, '.Timer')
 
             cal = timer_props['TimersCalendar']
