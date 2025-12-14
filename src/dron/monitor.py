@@ -126,7 +126,12 @@ class UnitsTable(DataTable):
         # TODO crap, but then need to keep previous entries
 
         if len(self.filter_query) > 0:
-            entries = {k: v for k, v in entries.items() if re.search(self.filter_query, v.unit)}  # TODO regex?
+            entries = {
+                k: v
+                for k, v in entries.items()
+                # concat all fields into single string for searching, that way can search in command as well
+                if re.search(self.filter_query, ' '.join(str(x) for x in asdict(v).values()), re.IGNORECASE)
+            }
 
         current_rows: set[RowKey] = set(self.rows.keys())
 
