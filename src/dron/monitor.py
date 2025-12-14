@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import re
+import subprocess
+import traceback
 from dataclasses import asdict, fields
 from datetime import datetime
 from typing import Any, ClassVar, override
@@ -14,6 +16,8 @@ from textual.widgets.data_table import RowKey
 
 from .common import MonitorEntry, MonitorParams
 from .dron import get_entries_for_monitor, managed_units
+from .notify.common import get_last_systemd_log
+from .systemd import _unit_success_rate
 
 MonitorEntries = dict[RowKey, MonitorEntry]
 
@@ -58,16 +62,16 @@ class Clock(Static):
 
 class UnitsTable(DataTable):
     BINDINGS: ClassVar = [
-        Binding("j", "cursor_down"   , "Down"         , show=False),
-        Binding("k", "cursor_up"     , "Up"           , show=False),
-        Binding("h", "cursor_left"   , "Left"         , show=False),
-        Binding("l", "cursor_right"  , "Right"        , show=False),
-        Binding("g", "scroll_top"    , "Top"          , show=False),
-        Binding("G", "scroll_bottom" , "Bottom"       , show=False),
-        Binding("^", "scroll_home"   , "Start of line", show=False),
-        Binding("$", "scroll_end"    , "End of line"  , show=False),
+        Binding("j"    , "cursor_down"  , "Down"         , show=False),
+        Binding("k"    , "cursor_up"    , "Up"           , show=False),
+        Binding("h"    , "cursor_left"  , "Left"         , show=False),
+        Binding("l"    , "cursor_right" , "Right"        , show=False),
+        Binding("g"    , "scroll_top"   , "Top"          , show=False),
+        Binding("G"    , "scroll_bottom", "Bottom"       , show=False),
+        Binding("^"    , "scroll_home"  , "Start of line", show=False),
+        Binding("$"    , "scroll_end"   , "End of line"  , show=False),
+        Binding("enter", "select_cursor", "Select"       , show=False),
     ]  # fmt: skip
-    # TODO would be nice to display log on enter press or something?
 
     def __init__(self, params: MonitorParams) -> None:
         super().__init__(
@@ -154,6 +158,43 @@ class UnitsTable(DataTable):
         #  but I guess not a huge deal now
         self.sort(key=sort_key)
 
+    def show_details_in_pager(self, unit_name: RowKey) -> None:
+        assert self.entries is not None
+        entry = self.entries[unit_name]
+
+        header_lines = [
+            f"Unit: {entry.unit}",
+        ]
+        if entry.command is not None:
+            header_lines.append(f"Command: {entry.command}")
+
+        try:
+            rate = _unit_success_rate(entry.unit)
+        except Exception as e:
+            header_lines.append(f"Success rate: failed to get ({e})")
+        else:
+            header_lines.append(f"Success rate: {rate:.2%}")
+
+        header_lines.append("\nLogs:\n")
+        header_bytes = "\n".join(header_lines).encode()
+
+        with self.app.suspend():
+            try:
+                with subprocess.Popen(['less', '-R'], stdin=subprocess.PIPE) as p:
+                    stdin = p.stdin
+                    assert stdin is not None
+                    stdin.write(header_bytes)
+                    try:
+                        for chunk in get_last_systemd_log(entry.unit):
+                            stdin.write(chunk)
+                    except Exception:
+                        # exception can happen if unit never ran or who knows why else
+                        stdin.write(b"\n\nError fetching logs:\n")
+                        stdin.write(traceback.format_exc().encode())
+            except BrokenPipeError:
+                # User exited pager early
+                pass
+
 
 class SearchInput(Input):
     def __init__(self) -> None:
@@ -235,6 +276,13 @@ class MonitorApp(App):
     @property
     def rich_log(self) -> RichLog:
         return self.query_one(RichLog)
+
+    def on_data_table_row_selected(self, event: DataTable.RowSelected) -> None:
+        # Note: This handler needs to be in the App (or a parent widget) because
+        # events bubble up from the child (UnitsTable) to the parent.
+        # The widget itself does not receive its own bubbled events.
+        if isinstance(event.control, UnitsTable):
+            event.control.show_details_in_pager(event.row_key)
 
     # @override  # TODO weird.. type checker complains it's not present in base class?
     def on_mount(self) -> None:

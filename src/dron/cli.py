@@ -240,6 +240,7 @@ def cmd_run(*, unit: Unit, do_exec: bool) -> None:
 @click.option('--once', is_flag=True, help='only call once')
 @click.option('--rate', is_flag=True, help='Display success rate (unstable and potentially slow)')
 @click.option('--command', is_flag=True, help='Display command')
+# TODO maybe make command default? it's only marginally (~5-10%) slower than without it
 def cmd_monitor(*, n: float, once: bool, rate: bool, command: bool) -> None:
     """Monitor services/timers managed by dron"""
     params = MonitorParams(
