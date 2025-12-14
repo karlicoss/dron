@@ -38,12 +38,18 @@ notify-telegram = [
 ]
 [dependency-groups]
 testing = [
-    "pytest",
+    "pytest>=9",  # need version 9 for proper namespace package support
     "ruff",
+
+    "dron[notify-telegram]",
+]
+typecheck = [
+    { include-group = "testing" },
     "mypy",
     "lxml", # for mypy html coverage
+    "ty>=0.0.1a34",
+
     "types-tabulate",
-    "ty>=0.0.1a22",
 ]
 
 [project.scripts]
