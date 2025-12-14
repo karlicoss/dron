@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import asdict, fields
+from datetime import datetime
 from functools import lru_cache
 from typing import Any
 
@@ -60,6 +61,8 @@ class MonitorApp(App):
         super().__init__()
         self.monitor_params = monitor_params
         self.refresh_every = refresh_every
+        self.last_refresh: datetime | None = None
+        self.is_refreshing = False
 
     def compose(self) -> ComposeResult:
         # TODO self.log is already defined?? what is it?
@@ -75,8 +78,8 @@ class MonitorApp(App):
             zebra_stripes=True,  # alternating colours
         )
 
-        # NOTE: useful for debugging
-        # yield self.logx
+        # Show header with last refresh information
+        yield self.logx
         yield self.table
 
     def on_mount(self) -> None:
@@ -85,15 +88,20 @@ class MonitorApp(App):
         for col in get_columns():
             table.add_column(label=col, key=col)
 
-        # todo how to do async here as well?
-        entries = self.get_entries()
-        self.update(entries)
+        self._update_status("Loading...")
+        self.update_in_background()
 
         self.set_focus(table)
 
-        # TODO run and update it continuously? not sure
-        # what if it isn't computed within interval?
         self.set_interval(interval=self.refresh_every, callback=self.update_in_background)
+
+    def _update_status(self, status: str) -> None:
+        self.logx.clear()
+        if self.last_refresh is not None:
+            refresh_time = self.last_refresh.strftime("%Y-%m-%d %H:%M:%S")
+            self.logx.write_line(f"Last refresh: {refresh_time} | {status}")
+        else:
+            self.logx.write_line(status)
 
     def get_entries(self) -> MonitorEntries:
         managed = list(managed_units(with_body=False))  # body slows down this call quite a bit
@@ -102,8 +110,6 @@ class MonitorApp(App):
 
     def update(self, entries: MonitorEntries) -> None:
         table = self.table
-
-        # self.logx.write_line(f"HI {datetime.now().isoformat()}")
 
         current_rows: set[str] = {unwrap(x.value) for x in table.rows}
         to_remove = {x for x in current_rows if x not in entries}
@@ -121,21 +127,26 @@ class MonitorApp(App):
             for col, value in as_row(entry).items():
                 table.update_cell(row_key=row_key, column_key=col, value=value, update_width=True)
 
-        columns = get_columns()
+        if entries:
+            columns = get_columns()
 
-        def sort_key(row):
-            data = dict(zip(columns, row, strict=True))
-            is_running = 'running' in data['next']
-            failed = 'exit-code' in data['status']
-            return (not is_running, not failed, data['unit'])
+            def sort_key(row):
+                data = dict(zip(columns, row, strict=True))
+                is_running = 'running' in data['next']
+                failed = 'exit-code' in data['status']
+                return (not is_running, not failed, data['unit'])
 
-        # TODO hmm kinda annoying, doesn't look like it preserves cursor position
-        #  if the item pops on top of the list when a service is running?
-        #  but I guess not a huge deal now
-        table.sort(*columns, key=sort_key)
+            table.sort(*columns, key=sort_key)
+
+        self.last_refresh = datetime.now()
+        self.is_refreshing = False
+        self._update_status("Ready")
 
     @work(exclusive=True, thread=True)
     def update_in_background(self) -> None:
+        if not self.is_refreshing:
+            self.is_refreshing = True
+            self.call_from_thread(self._update_status, "Refreshing...")
         entries = self.get_entries()
         self.call_from_thread(self.update, entries)
 

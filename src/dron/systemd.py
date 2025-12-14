@@ -7,7 +7,6 @@ import shlex
 import shutil
 from collections.abc import Iterator, Sequence
 from datetime import UTC, datetime, timedelta
-from functools import lru_cache
 from itertools import groupby
 from pathlib import Path
 from subprocess import PIPE, Popen, run
@@ -256,6 +255,11 @@ class BusManager:
     def prop(obj, schema: str, name: str):
         return obj.Get(_sd(schema), name)
 
+    @staticmethod
+    def get_all(obj, schema: str):
+        """Get all properties at once to reduce D-Bus calls."""
+        return obj.GetAll(_sd(schema))
+
     @classmethod
     def exec_start(cls, props) -> Sequence[str]:
         dbus_exec_start = cls.prop(props, '.Service', 'ExecStart')
@@ -320,6 +324,10 @@ _UTCMAX = datetime.max.replace(tzinfo=UTC)
 
 
 class MonitorHelper:
+    def __init__(self) -> None:
+        # Cache the local timezone on initialization
+        self._local_tz: ZoneInfo | None = None
+
     def from_usec(self, usec) -> datetime_aware:
         u = int(usec)
         if u == 2**64 - 1:  # apparently systemd uses max uint64
@@ -329,17 +337,18 @@ class MonitorHelper:
             return datetime.fromtimestamp(u / 10**6, tz=UTC)
 
     @property
-    @lru_cache  # noqa: B019
     def local_tz(self) -> ZoneInfo:
-        try:
-            # it's a required dependency, but still might fail in some weird environments?
-            #   e.g. if zoneinfo information isn't available
-            from tzlocal import get_localzone
+        if self._local_tz is None:
+            try:
+                # it's a required dependency, but still might fail in some weird environments?
+                #   e.g. if zoneinfo information isn't available
+                from tzlocal import get_localzone
 
-            return get_localzone()
-        except Exception:
-            logger.error("Couldn't determine local timezone! Falling back to UTC")
-            return ZoneInfo('UTC')
+                self._local_tz = get_localzone()
+            except Exception:
+                logger.error("Couldn't determine local timezone! Falling back to UTC")
+                self._local_tz = ZoneInfo('UTC')
+        return self._local_tz
 
 
 # TODO maybe format seconds prettier. dunno
@@ -403,14 +412,20 @@ def get_entries_for_monitor(managed: State, *, params: MonitorParams) -> list[Mo
 
         service_props = service.dbus_properties
 
+        # Fetch all service properties at once to reduce D-Bus calls
+        service_unit_props = bus.get_all(service_props, '.Unit')
+        service_service_props = bus.get_all(service_props, '.Service')
+
         if timer is not None:
             props = timer.dbus_properties
-            # FIXME this might be io bound? maybe make async or use thread pool?
-            cal = bus.prop(props, '.Timer', 'TimersCalendar')
-            next_ = bus.prop(props, '.Timer', 'NextElapseUSecRealtime')
+            # Fetch all timer properties at once to reduce D-Bus calls
+            timer_props = bus.get_all(props, '.Timer')
 
-            # note: there is also bus.prop(props, '.Timer', 'LastTriggerUSec'), but makes more sense to use unit to account for manual runs
-            last = bus.prop(service_props, '.Unit', 'ActiveExitTimestamp')
+            cal = timer_props['TimersCalendar']
+            next_ = timer_props['NextElapseUSecRealtime']
+
+            # note: there is also timer_props['LastTriggerUSec'], but makes more sense to use unit to account for manual runs
+            last = service_unit_props['ActiveExitTimestamp']
 
             schedule = cal[0][1]  # TODO is there a more reliable way to retrieve it??
             # todo not sure if last is really that useful..
@@ -444,7 +459,7 @@ def get_entries_for_monitor(managed: State, *, params: MonitorParams) -> list[Mo
             command = shlex.join(exec_start)
         else:
             command = None
-        _pid: int | None = int(bus.prop(service_props, '.Service', 'MainPID'))
+        _pid: int | None = int(service_service_props['MainPID'])
         pid = None if _pid == 0 else str(_pid)
 
         if params.with_success_rate:
@@ -453,7 +468,7 @@ def get_entries_for_monitor(managed: State, *, params: MonitorParams) -> list[Mo
         else:
             rates = ''
 
-        service_result = bus.prop(service_props, '.Service', 'Result')
+        service_result = service_service_props['Result']
         status_ok = service_result == 'success'
         status = f'{service_result:<9} {ago:<8}{rates}'
 
