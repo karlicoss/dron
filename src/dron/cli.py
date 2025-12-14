@@ -261,7 +261,11 @@ def cmd_monitor(*, n: float, once: bool, rate: bool, command: bool) -> None:
     else:
         from .monitor import MonitorApp
 
-        app = MonitorApp(monitor_params=params, refresh_every=n)
+        app = MonitorApp(
+            monitor_params=params,
+            refresh_every=n,
+            show_logger=False,
+        )
         app.run()
 
 
