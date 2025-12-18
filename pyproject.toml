@@ -47,7 +47,7 @@ typecheck = [
     { include-group = "testing" },
     "mypy",
     "lxml", # for mypy html coverage
-    "ty>=0.0.1a34",
+    "ty>=0.0.3",
 
     "types-tabulate",
 ]
