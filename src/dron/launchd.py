@@ -112,17 +112,18 @@ def plist(
 ) -> str:
     # TODO hmm, kinda mirrors 'escape' method, not sure
     cmd: Sequence[str]
-    if isinstance(command, (list, tuple)):
-        cmd = tuple(map(str, command))
-    elif isinstance(command, Path):
+    if isinstance(command, Path):
         cmd = [str(command)]
-    elif isinstance(command, str) and ' ' not in command:
-        cmd = [command]
-    else:
-        # unquoting and splitting is way trickier than quoting and joining...
-        # not sure how to implement it p
-        # maybe we just want bash -c in this case, dunno how to implement properly
-        raise RuntimeError(command)
+    elif isinstance(command, str):
+        if ' ' not in command:
+            cmd = [command]
+        else:
+            # unquoting and splitting is way trickier than quoting and joining...
+            # not sure how to implement it p
+            # maybe we just want bash -c in this case, dunno how to implement properly
+            raise RuntimeError(command)  # too ambiguous?
+    else:  # must be an actual sequence of path-like things
+        cmd = tuple(map(str, command))  # ty: ignore[invalid-argument-type]  # see https://github.com/astral-sh/ty/issues/2087
     del command
 
     mschedule = ''
