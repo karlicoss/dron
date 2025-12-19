@@ -243,7 +243,11 @@ class BusManager:
 
         self.Interface = Interface  # meh
 
-        self.bus = SessionBus()  # note: SystemBus is for system-wide services
+        # NOTE: private=True is important here! Otherwise SessionBus() returns a shared connection.
+        # If that connection gets into a broken state (e.g. timeouts), it will persist across BusManager instantiations,
+        #   and result in DBusException: org.freedesktop.DBus.Error.NoReply
+        # Note that we instantiate BusManager every time we get systemd state, but seems like there is no need to cleanup/close bus, it doesn't seem to leak fds.
+        self.bus = SessionBus(private=True)  # note: SystemBus is for system-wide services
         systemd = self.bus.get_object(_sd(''), '/org/freedesktop/systemd1')
         self.manager = Interface(systemd, dbus_interface=_sd('.Manager'))
 
@@ -377,8 +381,6 @@ def get_entries_for_monitor(managed: State, *, params: MonitorParams) -> list[Mo
 
     UTCNOW = datetime.now(tz=UTC)
 
-    bus = BusManager()
-
     entries: list[MonitorEntry] = []
 
     # sort so that neigbouring unit.service/unit.timer go one after another for grouping
@@ -406,11 +408,11 @@ def get_entries_for_monitor(managed: State, *, params: MonitorParams) -> list[Mo
         if timer is not None:
             props = timer.dbus_properties
             # FIXME this might be io bound? maybe make async or use thread pool?
-            cal = bus.prop(props, '.Timer', 'TimersCalendar')
-            next_ = bus.prop(props, '.Timer', 'NextElapseUSecRealtime')
+            cal = BusManager.prop(props, '.Timer', 'TimersCalendar')
+            next_ = BusManager.prop(props, '.Timer', 'NextElapseUSecRealtime')
 
             # note: there is also bus.prop(props, '.Timer', 'LastTriggerUSec'), but makes more sense to use unit to account for manual runs
-            last = bus.prop(service_props, '.Unit', 'ActiveExitTimestamp')
+            last = BusManager.prop(service_props, '.Unit', 'ActiveExitTimestamp')
 
             schedule = cal[0][1]  # TODO is there a more reliable way to retrieve it??
             # todo not sure if last is really that useful..
@@ -444,7 +446,7 @@ def get_entries_for_monitor(managed: State, *, params: MonitorParams) -> list[Mo
             command = shlex.join(exec_start)
         else:
             command = None
-        _pid: int | None = int(bus.prop(service_props, '.Service', 'MainPID'))
+        _pid: int | None = int(BusManager.prop(service_props, '.Service', 'MainPID'))
         pid = None if _pid == 0 else str(_pid)
 
         if params.with_success_rate:
@@ -453,7 +455,7 @@ def get_entries_for_monitor(managed: State, *, params: MonitorParams) -> list[Mo
         else:
             rates = ''
 
-        service_result = bus.prop(service_props, '.Service', 'Result')
+        service_result = BusManager.prop(service_props, '.Service', 'Result')
         status_ok = service_result == 'success'
         status = f'{service_result:<9} {ago:<8}{rates}'
 
