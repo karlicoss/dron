@@ -28,7 +28,8 @@ if [ -n "${CI-}" ]; then
     *)
         # must be linux?
         # necessary for dbus-python
-        sudo DEBIAN_FRONTEND=noninteractive NEEDRESTART_SUSPEND=1 apt-get install --yes libdbus-1-dev libglib2.0-dev
+        sudo DEBIAN_FRONTEND=noninteractive NEEDRESTART_SUSPEND=1 apt update
+        sudo DEBIAN_FRONTEND=noninteractive NEEDRESTART_SUSPEND=1 apt install --yes libdbus-1-dev libglib2.0-dev
         ;;
     esac
 fi
