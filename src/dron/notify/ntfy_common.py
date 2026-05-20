@@ -9,8 +9,7 @@ import sys
 from typing import NoReturn
 
 
-# ty doesn't support NoReturn yet, see https://github.com/astral-sh/ty/issues/180
-def run_ntfy(*, job: str, backend: str) -> NoReturn:  # ty: ignore[invalid-return-type]
+def run_ntfy(*, job: str, backend: str) -> NoReturn:
     # TODO not sure what to do with --stdin arg here?
     # could probably use last N lines of log or something
     # TODO get last logs here?

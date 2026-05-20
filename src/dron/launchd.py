@@ -123,7 +123,7 @@ def plist(
             # maybe we just want bash -c in this case, dunno how to implement properly
             raise RuntimeError(command)  # too ambiguous?
     else:  # must be an actual sequence of path-like things
-        cmd = tuple(map(str, command))  # ty: ignore[invalid-argument-type]  # see https://github.com/astral-sh/ty/issues/2087
+        cmd = tuple(map(str, command))
     del command
 
     mschedule = ''

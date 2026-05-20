@@ -19,8 +19,7 @@ LOG_DIR = Path('~/Library/Logs/dron').expanduser()
 PYCACHE_PATH = Path('~/.cache/pycache').expanduser()
 
 
-# ty doesn't support NoReturn yet, see https://github.com/astral-sh/ty/issues/180
-def main() -> NoReturn:  # ty: ignore[invalid-return-type]
+def main() -> NoReturn:
     p = argparse.ArgumentParser()
     p.add_argument('--notify', action='append')
     p.add_argument('--job', required=True)
