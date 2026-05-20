@@ -14,18 +14,14 @@ dependencies = [
     "dbus-python; platform_system != 'Darwin'",  # dbus interface to systemd
 ]
 requires-python = ">=3.12"
-# FIXME dbus
 
-## these need to be set if you're planning to upload to pypi
+## these are only useful for pypi
 description = "What if cron and systemd had a baby?"
-license = {file = "LICENSE.txt"}
-authors = [
-    {name = "Dima Gerasimov (@karlicoss)", email = "karlicoss@gmail.com"},
-]
-maintainers = [
-    {name = "Dima Gerasimov (@karlicoss)", email = "karlicoss@gmail.com"},
-]
-[project.urls]
+license     = {file = "LICENSE"}
+authors     = [{name = "Dima Gerasimov (@karlicoss)", email = "karlicoss@gmail.com"}]
+maintainers = [{name = "Dima Gerasimov (@karlicoss)", email = "karlicoss@gmail.com"}]
+
+[project.urls]  # pypi will fetch some github stats/link, so somewhat useful
 Homepage = "https://github.com/karlicoss/dron"
 ##
 
@@ -36,6 +32,7 @@ notify-telegram = [
     # see https://github.com/rahiel/telegram-send/issues/115#issuecomment-1368728425
     "telegram-send>=0.37",
 ]
+
 [dependency-groups]
 testing = [
     "pytest>=9",  # need version 9 for proper namespace package support
@@ -44,16 +41,14 @@ testing = [
     "dron[notify-telegram]",
 ]
 typecheck = [
-    { include-group = "testing" },
     "mypy",
     "lxml", # for mypy html coverage
-    "ty>=0.0.3",
+    "ty>=0.0.38",
 
     "types-tabulate",
-]
 
-[project.scripts]
-dron = "dron.__main__:main"
+    { include-group = "testing" },
+]
 
 
 [build-system]
@@ -70,3 +65,6 @@ source = "vcs"
 [tool.hatch.version.raw-options]
 version_scheme = "python-simplified-semver"
 local_scheme = "dirty-tag"
+
+[project.scripts]
+dron = "dron.__main__:main"
