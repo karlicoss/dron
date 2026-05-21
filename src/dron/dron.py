@@ -5,11 +5,12 @@ import sys
 from collections import OrderedDict
 from collections.abc import Iterable, Iterator
 from concurrent.futures import ProcessPoolExecutor
+from dataclasses import dataclass
 from difflib import unified_diff
 from itertools import tee
 from pathlib import Path
 from subprocess import check_call
-from typing import NamedTuple
+from typing import assert_never
 
 import click
 
@@ -93,6 +94,14 @@ def make_state(jobs: Iterable[Job]) -> State:
             pre_units.append((uname + '.service', s))
 
             when = j.when
+            # NOTE: both None and ALWAYS currently compile to a timerless service.
+            # apply_state then treats timerless services as always-running, so these
+            # are effectively equivalent on systemd for now.
+            #
+            # This likely needs an explicit internal job mode once there is enough
+            # real ALWAYS usage to decide install-target semantics. In particular,
+            # desktop/session services may want graphical-session.target + PartOf
+            # rather than default.target.
             if when is None:
                 # manual job?
                 continue
@@ -115,7 +124,8 @@ def make_state(jobs: Iterable[Job]) -> State:
 
 
 # TODO bleh. too verbose..
-class Update(NamedTuple):
+@dataclass(frozen=True)
+class Update:
     unit_file: UnitFile
     old_body: Body
     new_body: Body
@@ -125,7 +135,8 @@ class Update(NamedTuple):
         return self.unit_file.name
 
 
-class Delete(NamedTuple):
+@dataclass(frozen=True)
+class Delete:
     unit_file: UnitFile
 
     @property
@@ -133,7 +144,8 @@ class Delete(NamedTuple):
         return self.unit_file.name
 
 
-class Add(NamedTuple):
+@dataclass(frozen=True)
+class Add:
     unit_file: UnitFile
     body: Body
 
@@ -142,8 +154,8 @@ class Add(NamedTuple):
         return self.unit_file.name
 
 
-Action = Update | Delete | Add
-Plan = Iterable[Action]
+type Action = Update | Delete | Add
+type Plan = Iterable[Action]
 
 # TODO ugh. not sure how to verify them?
 
@@ -182,7 +194,7 @@ def apply_state(pending: State) -> None:
         # TODO meh. not ideal
         return not has_timer
 
-    plan = list(compute_plan(current=current, pending=pending))
+    plan: list[Action] = list(compute_plan(current=current, pending=pending))
 
     deletes: list[Delete] = []
     adds: list[Add] = []
@@ -196,7 +208,7 @@ def apply_state(pending: State) -> None:
         elif isinstance(a, Update):
             _updates.append(a)
         else:
-            raise TypeError("Can't happen", a)
+            assert_never(a)
 
     if len(deletes) == len(current) and len(deletes) > 0:
         msg = "Trying to delete all managed jobs"
@@ -205,12 +217,11 @@ def apply_state(pending: State) -> None:
         else:
             raise RuntimeError(msg)
 
-    Diff = list[str]
+    type Diff = list[str]
     nochange: list[Update] = []
     updates: list[tuple[Update, Diff]] = []
 
     for u in _updates:
-        unit = a.unit
         diff: Diff = list(
             unified_diff(
                 u.old_body.splitlines(keepends=True),
