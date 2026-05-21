@@ -6,7 +6,8 @@ from pathlib import Path
 
 import pytest
 
-from ..dron import do_lint, load_jobs
+from ..common import UnitState
+from ..dron import Add, Delete, Update, compute_plan, do_lint, load_jobs
 
 
 @pytest.fixture
@@ -83,6 +84,54 @@ def jobs() -> Iterator[Job]:
     )
     with pytest.raises(AssertionError):
         _loaded = list(load_jobs(tab_module='test_drontab'))
+
+
+def test_compute_plan() -> None:
+    def unit(name: str, body: str) -> UnitState:
+        return UnitState(unit_file=Path('/units') / name, body=body, cmdline=None)
+
+    # fmt: off
+    unchanged_current = unit('unchanged.service', 'same')
+    changed_current   = unit('changed.service'  , 'old')
+    deleted_current   = unit('deleted.service'  , 'deleted')
+
+    unchanged_pending = unit('unchanged.service', 'same')
+    changed_pending   = unit('changed.service'  , 'new')
+    added_pending     = unit('added.service'    , 'added')
+    # fmt: on
+
+    plan = list(
+        compute_plan(
+            current=[
+                unchanged_current,
+                changed_current,
+                deleted_current,
+            ],
+            pending=[
+                unchanged_pending,
+                changed_pending,
+                added_pending,
+            ],
+        )
+    )
+
+    assert plan == [
+        Delete(unit_file=deleted_current.unit_file),
+        Update(
+            unit_file=unchanged_current.unit_file,
+            old_body='same',
+            new_body='same',
+        ),
+        Update(
+            unit_file=changed_current.unit_file,
+            old_body='old',
+            new_body='new',
+        ),
+        Add(
+            unit_file=added_pending.unit_file,
+            body='added',
+        ),
+    ]
 
 
 def test_jobs_auto_naming(tmp_pythonpath: Path) -> None:
