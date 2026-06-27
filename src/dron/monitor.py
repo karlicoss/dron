@@ -149,6 +149,9 @@ class UnitsTable(DataTable):
                     # hmm seems like DataTable is a bit dumb and even if value is the same, it does costly UI updates...
                     # this is quite noticeable optimization
                     if curr_value != new_value:
+                        # For ~200 rows, update_width=True costs a few extra ms per refresh.
+                        # Keeping it for now because status/next/schedule/command widths can grow, but if refresh
+                        # gets sluggish this is a good first knob to turn off for ordinary cell updates.
                         self.update_cell(row_key=key, column_key=col, value=new_value, update_width=True)
 
         def sort_key(row: list[str]):
@@ -161,6 +164,8 @@ class UnitsTable(DataTable):
         # TODO hmm kinda annoying, doesn't look like it preserves cursor position
         #  if the item pops on top of the list when a service is running?
         #  but I guess not a huge deal now
+        # Sorting 200-ish rows is cheap compared with the DataTable update/render itself
+        # (rough local benchmark: about 1 ms extra), so keep this simple unless row count grows a lot.
         self.sort(key=sort_key)
 
     def show_details_in_pager(self, unit_name: RowKey) -> None:

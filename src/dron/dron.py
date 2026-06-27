@@ -160,6 +160,15 @@ type Plan = Iterable[Action]
 # TODO ugh. not sure how to verify them?
 
 
+def _delete_order(a: Delete) -> int:
+    # systemd warns if we stop/disable a service while its triggering timer is still active.
+    if a.unit.endswith('.timer'):
+        return 0
+    if a.unit.endswith('.service'):
+        return 1
+    return 2
+
+
 def compute_plan(*, current: State, pending: State) -> Plan:
     # eh, I feel like i'm reinventing something already existing here...
     currentd = OrderedDict((x.unit_file, unwrap(x.body)) for x in current)
@@ -239,14 +248,15 @@ def apply_state(pending: State) -> None:
     logger.info(f'updating : {len(updates)}')
     logger.info(f'adding   : {len(adds)}')
 
-    for a in deletes:
+    deletes_ordered = sorted(deletes, key=_delete_order)
+
+    for a in deletes_ordered:
         if IS_SYSTEMD:
-            # TODO stop timer first?
             check_call(_systemctl('stop', a.unit))
             check_call(_systemctl('disable', a.unit))
         else:
             launchd.launchctl_unload(unit=Path(a.unit).stem)
-    for a in deletes:
+    for a in deletes_ordered:
         (DRON_UNITS_DIR / a.unit).unlink()
 
     for u, diff in updates:
