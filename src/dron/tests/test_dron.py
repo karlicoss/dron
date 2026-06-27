@@ -7,7 +7,7 @@ from pathlib import Path
 import pytest
 
 from ..common import UnitState
-from ..dron import Add, Delete, Update, compute_plan, do_lint, load_jobs
+from ..dron import Add, Delete, Update, _delete_order, compute_plan, do_lint, load_jobs
 
 
 @pytest.fixture
@@ -132,6 +132,13 @@ def test_compute_plan() -> None:
             body='added',
         ),
     ]
+
+
+def test_delete_order_deletes_timers_before_services() -> None:
+    timer = Delete(unit_file=Path('/units/example.timer'))
+    service = Delete(unit_file=Path('/units/example.service'))
+
+    assert sorted([service, timer], key=_delete_order) == [timer, service]
 
 
 def test_jobs_auto_naming(tmp_pythonpath: Path) -> None:
