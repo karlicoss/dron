@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import importlib
 import json
 import os
 import re
@@ -12,7 +13,7 @@ from itertools import groupby
 from pathlib import Path
 from subprocess import PIPE, Popen, run
 from tempfile import TemporaryDirectory
-from typing import Any
+from typing import Any, cast
 from zoneinfo import ZoneInfo
 
 from .api import (
@@ -235,21 +236,18 @@ def _sd(s: str) -> str:
 
 class BusManager:
     def __init__(self) -> None:
-        # unused-ignore because on macos there is no dbus (but this code is still running mypy on CI)
-        from dbus import (  # type: ignore[import-untyped,import-not-found,unused-ignore]  # ty: ignore[unresolved-import]
-            Interface,
-            SessionBus,
-        )
+        # Keep this dynamic because dbus-python is missing on macos; and it's very difficult to convince type checkers to handle that
+        dbus = importlib.import_module('dbus')
 
-        self.Interface = Interface  # meh
+        self.Interface = cast(Any, dbus).Interface  # meh
 
         # NOTE: private=True is important here! Otherwise SessionBus() returns a shared connection.
         # If that connection gets into a broken state (e.g. timeouts), it will persist across BusManager instantiations,
         #   and result in DBusException: org.freedesktop.DBus.Error.NoReply
         # Note that we instantiate BusManager every time we get systemd state, but seems like there is no need to cleanup/close bus, it doesn't seem to leak fds.
-        self.bus = SessionBus(private=True)  # note: SystemBus is for system-wide services
+        self.bus = cast(Any, dbus).SessionBus(private=True)  # note: SystemBus is for system-wide services
         systemd = self.bus.get_object(_sd(''), '/org/freedesktop/systemd1')
-        self.manager = Interface(systemd, dbus_interface=_sd('.Manager'))
+        self.manager = self.Interface(systemd, dbus_interface=_sd('.Manager'))
 
     def properties(self, u: Unit):
         service_unit = self.manager.GetUnit(u)
