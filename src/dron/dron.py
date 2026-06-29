@@ -254,6 +254,9 @@ def apply_state(pending: State) -> None:
         if IS_SYSTEMD:
             check_call(_systemctl('stop', a.unit))
             check_call(_systemctl('disable', a.unit))
+            # A failed inactive unit treats stop as already done and keeps
+            # its failed state until explicitly reset.
+            check_call(_systemctl('reset-failed', a.unit))
         else:
             launchd.launchctl_unload(unit=Path(a.unit).stem)
     for a in deletes_ordered:
