@@ -1,13 +1,15 @@
-NOTE: readme is a little outdated (although mostly correct).
-Best source of truth is =--help=.
+NOTE: this README is a brief overview.
+Best source of truth is =dron --help=.
 
-#+begin_src python :results drawer :exports results 
-import dron; return dron.make_parser().description
+#+begin_src python :results drawer replace :exports results
+from dron.cli import cli
+return cli.help.replace('\b', '')
 #+end_src
 
 #+RESULTS:
 :results:
 dron -- simple frontend for Systemd, inspired by cron.
+
 
 - *d* stands for 'Systemd'
 - *ron* stands for 'cron'
@@ -15,54 +17,61 @@ dron -- simple frontend for Systemd, inspired by cron.
 dron is my attempt to overcome things that make working with Systemd tedious
 :end:
 
+* What does it do?
 
-#+begin_src python :results drawer :exports results 
-import dron; return dron.make_parser().epilog
+=dron= is a small Python CLI for defining scheduled jobs in Python while letting
+the operating system do the actual running and scheduling:
+
+- on Linux it manages user-level =systemd= =.service= and =.timer= units
+- on macOS it manages user-level =launchd= LaunchAgents
+
+Jobs live in a Python module, defaulting to =drontab.<hostname>=. The module must
+define a =jobs()= function that yields =dron.api.job(...)= objects.
+
+#+begin_src python :results drawer replace :exports results
+from dron.cli import _drontab_example
+return _drontab_example()
 #+end_src
 
 #+RESULTS:
 :results:
+from dron.api import job
 
-* What does it do?
-In short, you type ~dron edit~ and edit your config file, similarly to ~crontab -e~:
+# at the moment you're expected to define jobs() function that yields jobs
+# in the future I might add more mechanisms
+def jobs():
+    # simple job that doesn't do much
+    yield job(
+        'daily',
+        '/home/user/scripts/run-borg /home/user',
+        unit_name='borg-backup-home',
+    )
 
-: from dron.api import job
-:
-: # at the moment you're expected to define jobs() function that yields jobs
-: # in the future I might add more mechanisms
-: def jobs():
-:     # simple job that doesn't do much
-:     yield job(
-:         'daily',
-:         '/home/user/scripts/run-borg /home/user',
-:         unit_name='borg-backup-home',
-:     )
-:
-:     yield job(
-:         'daily',
-:         'linkchecker https://beepb00p.xyz',
-:         unit_name='linkchecker-beepb00p',
-:     )
-:
-:     # drontab is simply python code!
-:     # so if you're annoyed by having to rememver Systemd syntax, you can use a helper function
-:     def every(*, mins: int) -> str:
-:         return f'*:0/{mins}'
-:
-:     # make sure my website is alive, it will send local email on failure
-:     yield job(
-:         every(mins=10),
-:         'ping https://beepb00p.xyz',
-:         unit_name='ping-beepb00p',
-:     )
+    yield job(
+        'daily',
+        'linkchecker https://beepb00p.xyz',
+        unit_name='linkchecker-beepb00p',
+    )
 
+    # drontab is simply python code!
+    # so if you're annoyed by having to remember Systemd syntax, you can use a helper function
+    def every(*, mins: int) -> str:
+        return f'*:0/{mins}'
 
-After you save your changes and exit the editor, your drontab is checked for syntax and applied
+    # make sure my website is alive, it will send local email on failure
+    yield job(
+        every(mins=10),
+        'ping https://beepb00p.xyz',
+        unit_name='ping-beepb00p',
+    )
+:end:
 
-- if checks have passed, your jobs are mapped onto Systemd units and started up
-- if there are potential errors, you are prompted to fix them before retrying
+Run =dron apply= after editing the module. =dron= imports the jobs, builds the
+desired backend units, compares them with currently managed units, and applies
+the add/update/delete plan.
 
 * Why?
+
 In short, because I want to benefit from the heavy lifting that Systemd does: timeouts, resource management, restart policies, powerful scheduling specs and logging,
 while not having to manually manipulate numerous unit files and restart the daemon all over.
 
@@ -71,68 +80,103 @@ I elaborate on what led me to implement it and motivation [[https://beepb00p.xyz
 - why not just use [[https://beepb00p.xyz/scheduler.html#cron][cron]]?
 - why not just use [[https://beepb00p.xyz/scheduler.html#systemd][systemd]]?
 
-:end:
-
-
 * Setting up
 
-1. install system dependencies (see =.ci/run= ) -- these are necessary for =dbus-python= library
-2. install dron: =pip3 install --user git+https://github.com/karlicoss/dron=
-3. install =sendmail= from your package manager if you want to recieve job failure emails
+1. install system dependencies if needed; on Linux, =dbus-python= may require
+   DBus development libraries
+2. install =dron=: =pip3 install --user git+https://github.com/karlicoss/dron=
+3. install =sendmail= from your package manager if you want local job failure
+   emails
 
 * Using
-  
-#+begin_src python :results value :exports results 
-import dron; 
-p = dron.make_parser()
-p.prog = ''
-p.epilog = ''
-return p.format_help()
+
+#+begin_src python :results output replace :exports results
+from click.testing import CliRunner
+from dron.cli import cli
+
+print(CliRunner().invoke(cli, ['--help'], prog_name='dron').output)
 #+end_src
 
 #+RESULTS:
 #+begin_example
-usage: [-h] [--marker MARKER] {monitor,past,edit,apply,lint,uninstall} ...
+Usage: dron [OPTIONS] COMMAND [ARGS]...
 
-dron -- simple frontend for Systemd, inspired by cron.
+  dron -- simple frontend for Systemd, inspired by cron.
 
-- *d* stands for 'Systemd'
-- *ron* stands for 'cron'
+  - *d* stands for 'Systemd'
+  - *ron* stands for 'cron'
 
-dron is my attempt to overcome things that make working with Systemd tedious
+  dron is my attempt to overcome things that make working with Systemd tedious
 
-positional arguments:
-  {monitor,past,edit,apply,lint,uninstall}
-    monitor             Monitor services/timers managed by dron
-    past                List past job runs
-    edit                Edit  drontab (like 'crontab -e')
-    apply               Apply drontab (like 'crontab' with no args)
-    lint                Check drontab (no 'crontab' alternative, sadly!)
-    uninstall           Uninstall all managed jobs
+Options:
+  --marker TEXT  Use custom marker instead of default `(MANAGED BY DRON)`.
+                 Useful for developing/testing.
+  --help         Show this message and exit.
 
-options:
-  -h, --help            show this help message and exit
-  --marker MARKER       Use custom marker instead of default `(MANAGED BY DRON)`. Possibly useful for developing/testing.
+Commands:
+  apply      Apply drontab (like 'crontab' with no args)
+  debug      Print some debug info
+  job        Actions on individual jobs
+  lint
+  monitor    Monitor services/timers managed by dron
+  print      Parse and print drontab
+  uninstall  Remove all managed jobs (will ask for confirmation)
+
+  ,* Why?
+
+  In short, because I want to benefit from the heavy lifting that Systemd does:
+  timeouts, resource management, restart policies, powerful scheduling specs and
+  logging, while not having to manually manipulate numerous unit files and
+  restart the daemon all over.
+
+  I elaborate on what led me to implement it and motivation
+  [[https://beepb00p.xyz/scheduler.html#what_do_i_want][here]]. Also:
+
+  - why not just use [[https://beepb00p.xyz/scheduler.html#cron][cron]]?
+  - why not just use [[https://beepb00p.xyz/scheduler.html#systemd][systemd]]?
+
 #+end_example
 
+Common commands:
+
+- =dron apply= imports the drontab module, generates backend units, diffs them
+  against managed units, and applies the plan
+- =dron lint= imports the drontab module and verifies the generated units without
+  applying changes
+- =dron print= shows parsed jobs, with =--pretty= for a table
+- =dron monitor= opens the Textual monitor; =dron monitor --once= prints a
+  one-shot table
+- =dron job past <unit>= shows previous runs for one unit
+- =dron job run <unit>= runs one job immediately, ignoring the timer
+- =dron uninstall= removes all managed jobs after confirmation
+
+Use =--module= with =apply=, =lint=, and =print= to point at a different drontab
+module.
 
 * Job syntax
-  
-The idea is that it's a simple python DSL that lets you define simple jobs with minimal friction.
 
-However, if you wish you can pass arbitrary unit properties as keyword arguments as well.
+The idea is that it's a simple Python DSL that lets you define jobs with minimal
+friction.
+
+#+begin_src python :eval no
+job(when, command, *, unit_name=None, on_failure=(notify.email_local,), **kwargs)
+#+end_src
+
+=when= is a backend schedule string such as =daily= or =*:0/10=. Passing =None=
+creates a service without a timer, so it can still be run manually with
+=dron job run=. =command= can be a shell string or a sequence of command parts.
+
+Any extra keyword arguments are passed to the backend unit generator, which is
+useful when you need systemd-specific service properties.
 
 * Caveats
-- older systemd versions would only accept absolute path for =ExecStart=. That should be caught during =dron edit= though
-  
+
+- =launchd= support intentionally has a smaller schedule surface than =systemd=
+- older =systemd= versions only accepted absolute paths for =ExecStart=; generated
+  units are verified before =apply= installs them
+
 * Potential improvements
-- custom validation; at the moment it runs pylint, mypy and systemd verify
-- make it more atomic?
 
-  E.g. roll back all the changes until daemon-reload
-- more failure report mechanisms?
-
-  Ideally, benefit from [[https://github.com/dschep/ntfy][ntfy]]
-  
-** TODO add issues with various questions that I had in code?
-  
+- make applying changes more atomic, for example rolling back all changes until
+  daemon reload succeeds
+- more failure report mechanisms

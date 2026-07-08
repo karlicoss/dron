@@ -28,7 +28,6 @@ from .dron import (
 
 
 # TODO test it on CI?
-# TODO explicitly inject it into readme?
 def _drontab_example() -> str:
     return '''
 from dron.api import job
@@ -50,7 +49,7 @@ def jobs():
     )
 
     # drontab is simply python code!
-    # so if you're annoyed by having to rememver Systemd syntax, you can use a helper function
+    # so if you're annoyed by having to remember Systemd syntax, you can use a helper function
     def every(*, mins: int) -> str:
         return f'*:0/{mins}'
 
@@ -131,7 +130,6 @@ arg_no_verify = click.option(
 @arg_tab_module
 @arg_no_verify
 def cmd_lint(*, tab_module: str) -> None:
-    # FIXME how to disable verity?
     # FIXME lint command isn't very interesting now btw?
     # perhaps instead, either add dry mode to apply
     # or split into the 'diff' part and side effect apply part

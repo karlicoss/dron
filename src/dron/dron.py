@@ -170,7 +170,6 @@ def _delete_order(a: Delete) -> int:
 
 
 def compute_plan(*, current: State, pending: State) -> Plan:
-    # eh, I feel like i'm reinventing something already existing here...
     currentd = OrderedDict((x.unit_file, unwrap(x.body)) for x in current)
     pendingd = OrderedDict((x.unit_file, unwrap(x.body)) for x in pending)
 
