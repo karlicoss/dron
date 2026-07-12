@@ -3,10 +3,10 @@ from __future__ import annotations
 import itertools
 import json
 import os
+import plistlib
 import re
 import shlex
 import sys
-import textwrap
 from collections.abc import Iterator, Sequence
 from datetime import timedelta
 from pathlib import Path
@@ -126,13 +126,13 @@ def plist(
         cmd = tuple(map(str, command))
     del command
 
-    mschedule = ''
+    schedule: dict[str, object] = {}
     if when is None:
         # support later
         raise RuntimeError(unit_name)
 
     if when == ALWAYS:
-        mschedule = '<key>KeepAlive</key>\n<true/>'
+        schedule = {'KeepAlive': True}
     else:
         assert isinstance(when, OnCalendar), when
         # https://www.freedesktop.org/software/systemd/man/systemd.time.html#
@@ -163,21 +163,16 @@ def plist(
             assert m is not None, when
             hh = m.group(1)
             mm = m.group(2)
-            mschedule = '\n'.join(
-                [
-                    '<key>StartCalendarInterval</key>',
-                    '<dict>',
-                    '<key>Hour</key>',
-                    f'<integer>{int(hh)}</integer>',
-                    '<key>Minute</key>',
-                    f'<integer>{int(mm)}</integer>',
-                    '</dict>',
-                ]
-            )
+            schedule = {
+                'StartCalendarInterval': {
+                    'Hour': int(hh),
+                    'Minute': int(mm),
+                }
+            }
         else:
-            mschedule = '\n'.join(('<key>StartInterval</key>', f'<integer>{seconds}</integer>'))
+            schedule = {'StartInterval': seconds}
 
-    assert mschedule != '', unit_name
+    assert len(schedule) > 0, unit_name
 
     # meh.. not sure how to reconcile it better with systemd
     on_failure = [x.replace('--job %n', f'--job {unit_name}') + ' --stdin' for x in on_failure]
@@ -191,34 +186,17 @@ def plist(
         *cmd,
     )
     del cmd
-    program_argvs = '\n'.join(f'<string>{c}</string>' for c in program_argv)
 
     # TODO add log file, although mailer is already capturing stdout
     # TODO hmm maybe use the same log file for all dron jobs? would make it easier to rotate?
-    res = f'''
-<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-
-    <key>Label</key>
-    <string>{DRON_PREFIX}{unit_name}</string>
-    <key>ProgramArguments</key>
-    <array>
-{textwrap.indent(program_argvs, " " * 8)}
-    </array>
-
-    <key>RunAtLoad</key>
-    <true/>
-
-{textwrap.indent(mschedule, " " * 8)}
-
-    <key>Comment</key>
-    <string>{MANAGED_MARKER}</string>
-</dict>
-</plist>
-'''.lstrip()
-    return res
+    properties: dict[str, object] = {
+        'Label': DRON_PREFIX + unit_name,
+        'ProgramArguments': program_argv,
+        'RunAtLoad': True,
+        **schedule,
+        'Comment': MANAGED_MARKER,
+    }
+    return plistlib.dumps(properties, sort_keys=False).decode()
 
 
 from .common import LaunchdUnitState

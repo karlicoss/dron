@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import plistlib
 import sys
 from collections.abc import Iterator
 from pathlib import Path
@@ -8,6 +9,7 @@ import pytest
 
 from ..common import UnitState
 from ..dron import Add, Delete, Update, _delete_order, compute_plan, do_lint, load_jobs
+from ..launchd import plist
 
 
 @pytest.fixture
@@ -139,6 +141,18 @@ def test_delete_order_deletes_timers_before_services() -> None:
     service = Delete(unit_file=Path('/units/example.service'))
 
     assert sorted([service, timer], key=_delete_order) == [timer, service]
+
+
+def test_launchd_plist_escapes_command_arguments() -> None:
+    body = plist(
+        unit_name='example',
+        command=['/bin/echo', 'one & two', '<three>'],
+        on_failure=[],
+        when='hourly',
+    )
+
+    parsed = plistlib.loads(body.encode())
+    assert parsed['ProgramArguments'][-3:] == ['/bin/echo', 'one & two', '<three>']
 
 
 def test_jobs_auto_naming(tmp_pythonpath: Path) -> None:
