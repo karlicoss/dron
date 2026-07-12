@@ -103,6 +103,40 @@ def remove_launchd_wrapper(cmd: str) -> str:
     return cmd
 
 
+def _calendar_minutes(*, step: int) -> list[dict[str, int]]:
+    assert 0 < step <= 60, step
+    return [{'Minute': minute} for minute in range(0, 60, step)]
+
+
+def _format_calendar_interval(interval: object) -> str:
+    entries = [interval] if isinstance(interval, dict) else interval
+    assert isinstance(entries, list), interval
+    assert len(entries) > 0, interval
+
+    hours: list[int | None] = []
+    minutes: list[int | None] = []
+    for entry in entries:
+        assert isinstance(entry, dict), entry
+        assert set(entry) <= {'Hour', 'Minute'}, entry
+
+        hour = entry.get('Hour')
+        minute = entry.get('Minute')
+        assert hour is None or isinstance(hour, int), entry
+        assert minute is None or isinstance(minute, int), entry
+        hours.append(hour)
+        minutes.append(minute)
+
+    unique_hours = set(hours)
+    assert len(unique_hours) == 1, entries
+    [hour] = unique_hours
+
+    def format_component(value: int | None) -> str:
+        return '*' if value is None else f'{value:02}'
+
+    formatted_minutes = ','.join(format_component(minute) for minute in minutes)
+    return f'{format_component(hour)}:{formatted_minutes}'
+
+
 def plist(
     *,
     unit_name: str,
@@ -110,6 +144,20 @@ def plist(
     on_failure: Sequence[OnFailureAction],
     when: When | None = None,
 ) -> str:
+    """
+    Generate a launchd plist.
+
+    Supported ``when`` values:
+
+    - ``None`` for manual jobs
+    - ``always``
+    - ``daily``, ``hourly``, and ``minutely``
+    - ``HH:MM`` calendar times
+    - ``*:0/N`` for 1 to 60-minute wall-clock steps
+    - ``*:*:0/N`` for 1 to 3600-second steps, rounded up to whole minutes
+
+    systemd ``TimerSpec`` mappings are unsupported.
+    """
     # TODO hmm, kinda mirrors 'escape' method, not sure
     cmd: Sequence[str]
     if isinstance(command, Path):
@@ -127,52 +175,41 @@ def plist(
     del command
 
     schedule: dict[str, object] = {}
-    if when is None:
-        # support later
-        raise RuntimeError(unit_name)
-
     if when == ALWAYS:
         schedule = {'KeepAlive': True}
-    else:
+    elif when is not None:
         assert isinstance(when, OnCalendar), when
-        # https://www.freedesktop.org/software/systemd/man/systemd.time.html#
-        # fmt: off
-        seconds = {
-            'minutely': 60,
-            'hourly'  : 60 * 60,
-            'daily'   : 60 * 60 * 24,
-        }.get(when)
-        # fmt: on
-        if seconds is None:
-            # ok, try systemd-like spec..
-            # fmt: off
-            specs = [
-                (re.escape('*:0/')   + r'(\d+)', 60),
-                (re.escape('*:*:0/') + r'(\d+)', 1),
-            ]
-            # fmt: on
-            for rgx, mult in specs:
-                m = re.fullmatch(rgx, when)
-                if m is not None:
-                    num = m.group(1)
-                    seconds = int(num) * mult
-                    break
-        if seconds is None:
-            # try to parse as hh:mm at least
-            m = re.fullmatch(r'(\d\d):(\d\d)', when)
-            assert m is not None, when
-            hh = m.group(1)
-            mm = m.group(2)
+
+        if when == 'daily':
+            schedule = {'StartCalendarInterval': {'Hour': 0, 'Minute': 0}}
+        elif when == 'hourly':
+            schedule = {'StartCalendarInterval': {'Minute': 0}}
+        elif when == 'minutely':
+            schedule = {'StartCalendarInterval': {}}
+        elif (minute_step_match := re.fullmatch(re.escape('*:0/') + r'(\d+)', when)) is not None:
+            minute_step = int(minute_step_match.group(1))
+            schedule = {'StartCalendarInterval': _calendar_minutes(step=minute_step)}
+        elif (second_step_match := re.fullmatch(re.escape('*:*:0/') + r'(\d+)', when)) is not None:
+            seconds = int(second_step_match.group(1))
+            assert seconds > 0, when
+
+            # launchd calendars have no seconds field.
+            # Round up so the approximation never runs more often than requested.
+            minutes = max(1, (seconds + 59) // 60)
+            assert minutes <= 60, (unit_name, when, minutes)
+            logger.warning(
+                f"launchd job '{unit_name}' rounds second-based schedule '{when}' up to a {minutes}-minute wall-clock schedule"
+            )
+            schedule = {'StartCalendarInterval': _calendar_minutes(step=minutes)}
+        elif (time_match := re.fullmatch(r'(\d\d):(\d\d)', when)) is not None:
             schedule = {
                 'StartCalendarInterval': {
-                    'Hour': int(hh),
-                    'Minute': int(mm),
+                    'Hour': int(time_match.group(1)),
+                    'Minute': int(time_match.group(2)),
                 }
             }
-        else:
-            schedule = {'StartInterval': seconds}
 
-    assert len(schedule) > 0, unit_name
+    assert when is None or len(schedule) > 0, unit_name
 
     # meh.. not sure how to reconcile it better with systemd
     on_failure = [x.replace('--job %n', f'--job {unit_name}') + ' --stdin' for x in on_failure]
@@ -192,7 +229,6 @@ def plist(
     properties: dict[str, object] = {
         'Label': DRON_PREFIX + unit_name,
         'ProgramArguments': program_argv,
-        'RunAtLoad': True,
         **schedule,
         'Comment': MANAGED_MARKER,
     }
@@ -221,11 +257,12 @@ def launchd_units(*, with_body: bool) -> Iterator[LaunchdUnitState]:
         if start_interval is not None:
             assert isinstance(start_interval, int), (unit_file, start_interval)
             schedule = f'every {start_interval} seconds'
-        elif properties.get('StartCalendarInterval') is not None:
-            schedule = 'calendar'
-        else:
-            assert properties.get('KeepAlive') is True, (unit_file, properties)
+        elif (calendar_interval := properties.get('StartCalendarInterval')) is not None:
+            schedule = _format_calendar_interval(calendar_interval)
+        elif properties.get('KeepAlive') is True:
             schedule = 'always'
+        else:
+            schedule = 'manual'
 
         yield LaunchdUnitState(
             unit_file=unit_file,

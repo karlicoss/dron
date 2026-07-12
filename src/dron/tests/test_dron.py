@@ -9,7 +9,7 @@ import pytest
 
 from ..common import UnitState
 from ..dron import Add, Delete, Update, _delete_order, compute_plan, do_lint, load_jobs
-from ..launchd import plist
+from ..launchd import _format_calendar_interval, plist
 
 
 @pytest.fixture
@@ -153,6 +153,105 @@ def test_launchd_plist_escapes_command_arguments() -> None:
 
     parsed = plistlib.loads(body.encode())
     assert parsed['ProgramArguments'][-3:] == ['/bin/echo', 'one & two', '<three>']
+
+
+@pytest.mark.parametrize(
+    ('when', 'expected'),
+    [
+        ('daily'   , {'Hour': 0,  'Minute': 0 }),
+        ('hourly'  , {            'Minute': 0 }),
+        ('minutely', {                        }),
+        ('12:34'   , {'Hour': 12, 'Minute': 34}),
+        ('*:0/10'  , [{           'Minute': minute} for minute in range(0, 60, 10)]),
+    ],
+)  # fmt: skip
+def test_launchd_plist_calendar_schedule(when: str, expected: object) -> None:
+    body = plist(
+        unit_name='example',
+        command='/bin/true',
+        on_failure=[],
+        when=when,
+    )
+
+    parsed = plistlib.loads(body.encode())
+    assert parsed['StartCalendarInterval'] == expected
+    assert 'StartInterval' not in parsed
+    assert 'RunAtLoad' not in parsed
+
+
+@pytest.mark.parametrize(
+    ('interval', 'expected'),
+    [
+        ({'Hour': 0, 'Minute': 0}, '00:00'),
+        ({           'Minute': 0}, '*:00' ),
+        ({                      }, '*:*'  ),
+        ([{'Minute': minute} for minute in range(0, 60, 10)], '*:00,10,20,30,40,50'),
+    ],
+)  # fmt: skip
+def test_format_launchd_calendar_interval(interval: object, expected: str) -> None:
+    assert _format_calendar_interval(interval) == expected
+
+
+@pytest.mark.parametrize(
+    ('seconds', 'minutes'),
+    [
+        (30, 1),
+        (61, 2),
+        (90, 2),
+    ],
+)
+def test_launchd_plist_rounds_second_schedule_to_minutes(seconds: int, minutes: int) -> None:
+    body = plist(
+        unit_name='example',
+        command='/bin/true',
+        on_failure=[],
+        when=f'*:*:0/{seconds}',
+    )
+
+    parsed = plistlib.loads(body.encode())
+    assert parsed['StartCalendarInterval'] == [{'Minute': minute} for minute in range(0, 60, minutes)]
+    assert 'StartInterval' not in parsed
+    assert 'RunAtLoad' not in parsed
+
+
+def test_launchd_plist_rejects_second_schedule_over_one_hour() -> None:
+    with pytest.raises(AssertionError):
+        plist(
+            unit_name='example',
+            command='/bin/true',
+            on_failure=[],
+            when='*:*:0/3601',
+        )
+
+
+def test_launchd_plist_always_uses_keepalive() -> None:
+    body = plist(
+        unit_name='example',
+        command='/bin/true',
+        on_failure=[],
+        when='always',
+    )
+
+    parsed = plistlib.loads(body.encode())
+    assert parsed['KeepAlive'] is True
+
+
+def test_launchd_plist_manual_job_has_no_automatic_start() -> None:
+    body = plist(
+        unit_name='example',
+        command='/bin/true',
+        on_failure=[],
+        when=None,
+    )
+
+    parsed = plistlib.loads(body.encode())
+    automatic_start_keys = {
+        'KeepAlive',
+        'RunAtLoad',
+        'StartCalendarInterval',
+        'StartInterval',
+    }
+    assert automatic_start_keys.isdisjoint(parsed)
 
 
 def test_jobs_auto_naming(tmp_pythonpath: Path) -> None:
