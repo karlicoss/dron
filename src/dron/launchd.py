@@ -12,7 +12,6 @@ from datetime import timedelta
 from pathlib import Path
 from subprocess import PIPE, Popen, check_call, check_output
 from tempfile import TemporaryDirectory
-from typing import Any
 
 from .api import (
     OnCalendar,
@@ -21,6 +20,7 @@ from .api import (
 )
 from .common import (
     ALWAYS,
+    DRON_UNITS_DIR,
     MANAGED_MARKER,
     Command,
     LaunchdUnitState,
@@ -29,8 +29,8 @@ from .common import (
     State,
     Unit,
     UnitFile,
+    is_managed,
     logger,
-    unwrap,
 )
 
 # TODO custom launchd domain?? maybe instead could do dron/ or something?
@@ -199,86 +199,67 @@ def plist(
     return plistlib.dumps(properties, sort_keys=False).decode()
 
 
-from .common import LaunchdUnitState
+# Managed plist files are the configuration source of truth.
+# launchctl documents its printed output as unstable,
+#   so only parse it for runtime fields unavailable on disk.
+def launchd_units(*, with_body: bool) -> Iterator[LaunchdUnitState]:
+    for unit_file in sorted(DRON_UNITS_DIR.glob('*.plist')):
+        raw = unit_file.read_bytes()
+        properties = plistlib.loads(raw)
+
+        comment = properties.get('Comment')
+        if not isinstance(comment, str):
+            continue
+        if not is_managed(comment):
+            continue
+
+        program_arguments = properties.get('ProgramArguments')
+        assert isinstance(program_arguments, list), (unit_file, program_arguments)
+        assert all(isinstance(arg, str) for arg in program_arguments), (unit_file, program_arguments)
+
+        start_interval = properties.get('StartInterval')
+        if start_interval is not None:
+            assert isinstance(start_interval, int), (unit_file, start_interval)
+            schedule = f'every {start_interval} seconds'
+        elif properties.get('StartCalendarInterval') is not None:
+            schedule = 'calendar'
+        else:
+            assert properties.get('KeepAlive') is True, (unit_file, properties)
+            schedule = 'always'
+
+        yield LaunchdUnitState(
+            unit_file=unit_file,
+            body=raw.decode() if with_body else None,
+            cmdline=tuple(program_arguments),
+            last_exit_code=None,
+            pid=None,
+            schedule=schedule,
+        )
+
+
+def _launchd_runtime(*, unit: Unit) -> tuple[str | None, str | None]:
+    output = check_output(_launchctl('print', fqn(unit))).decode()
+    last_exit_code = None
+    pid = None
+    for line in output.splitlines():
+        if line.startswith('\tlast exit code = '):
+            last_exit_code = line.removeprefix('\tlast exit code = ')
+        elif line.startswith('\tpid = '):
+            pid = line.removeprefix('\tpid = ')
+    return last_exit_code, pid
 
 
 def launchd_state(*, with_body: bool) -> Iterator[LaunchdUnitState]:
-    # sadly doesn't look like it has json interface??
-    dump = check_output(['launchctl', 'dumpstate']).decode('utf8')
-
-    name: str | None = None
-    extras: dict[str, Any] = {}
-    arguments: list[str] | None = None
-    all_props: str | None = None
-    fields = [
-        'path',
-        'last exit code',
-        'pid',
-        'run interval',
-    ]
-    for line in dump.splitlines():
-        if name is None:
-            # start of job description group
-            name = line.removesuffix(' = {')
-            all_props = ''
-            continue
-        elif line == '}':
-            # end of job description group
-            path: str | None = extras.get('path')
-            if path is not None and 'dron' in path:
-                # otherwsie likely some sort of system unit
-                unit_file = Path(path)
-                body = unit_file.read_text() if with_body else None
-
-                # TODO extract 'state'??
-
-                periodic_schedule = extras.get('run interval')
-                calendal_schedule = 'com.apple.launchd.calendarinterval' in unwrap(all_props)
-
-                schedule: str | None
-                if periodic_schedule is not None:
-                    schedule = 'every ' + periodic_schedule
-                elif calendal_schedule:
-                    # TODO parse properly
-                    schedule = 'calendar'
-                else:
-                    # NOTE: seems like keepalive attribute isn't present in launchd dumpstate output
-                    schedule = 'always'
-
-                yield LaunchdUnitState(
-                    unit_file=Path(path),
-                    body=body,
-                    cmdline=tuple(extras['arguments']),
-                    # might not be present when we killed process manually?
-                    last_exit_code=extras.get('last exit code'),
-                    # pid might not be present (presumably when it's not running)
-                    pid=extras.get('pid'),
-                    schedule=schedule,
-                )
-            name = None
-            all_props = None
-            extras = {}
-            continue
-
-        all_props = unwrap(all_props) + line + '\n'
-
-        if arguments is not None:
-            if line == '\t}':
-                extras['arguments'] = arguments
-                arguments = None
-            else:
-                arg = line.removeprefix('\t\t')
-                arguments.append(arg)
-        else:
-            xx = line.removeprefix('\t')
-            for f in fields:
-                zz = f'{f} = '
-                if xx.startswith(zz):
-                    extras[f] = xx.removeprefix(zz)
-                    break
-            # special handling..
-            if xx.startswith('arguments = '):
-                arguments = []
+    for state in launchd_units(with_body=with_body):
+        last_exit_code, pid = _launchd_runtime(unit=state.unit_file.stem)
+        yield LaunchdUnitState(
+            unit_file=state.unit_file,
+            body=state.body,
+            cmdline=state.cmdline,
+            last_exit_code=last_exit_code,
+            pid=pid,
+            schedule=state.schedule,
+        )
 
 
 def verify_unit(*, unit_name: str, body: str) -> None:

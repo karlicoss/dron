@@ -37,6 +37,10 @@ Unit = str
 Body = str
 UnitFile = Path
 
+# todo appdirs?
+DRON_DIR = Path('~/.config/dron').expanduser()
+DRON_UNITS_DIR = DRON_DIR / 'units'
+
 
 @dataclass
 class UnitState:

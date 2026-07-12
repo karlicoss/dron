@@ -18,6 +18,7 @@ from . import launchd, systemd
 from .api import Job, UnitName
 from .common import (
     ALWAYS,
+    DRON_UNITS_DIR,
     IS_SYSTEMD,
     Body,
     State,
@@ -29,9 +30,6 @@ from .common import (
 )
 from .systemd import _systemctl
 
-# todo appdirs?
-DRON_DIR = Path('~/.config/dron').expanduser()
-DRON_UNITS_DIR = DRON_DIR / 'units'
 DRON_UNITS_DIR.mkdir(parents=True, exist_ok=True)
 
 
@@ -192,7 +190,10 @@ def compute_plan(*, current: State, pending: State) -> Plan:
 
 # TODO it's not apply, more like 'compute' and also plan is more like a diff between states?
 def apply_state(pending: State) -> None:
-    current = list(managed_units(with_body=True))
+    if IS_SYSTEMD:
+        current = list(managed_units(with_body=True))
+    else:
+        current = list(launchd.launchd_units(with_body=True))
 
     pending_units = {s.unit_file.name for s in pending}
 
