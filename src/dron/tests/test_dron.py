@@ -8,7 +8,7 @@ from pathlib import Path
 import pytest
 
 from ..common import UnitState
-from ..dron import Add, Delete, Update, _delete_order, compute_plan, do_lint, load_jobs
+from ..dron import Add, Delete, Update, _delete_order, compute_plan, load_jobs, load_state, prepare_apply_plan
 from ..launchd import _format_calendar_interval, plist
 
 
@@ -134,6 +134,20 @@ def test_compute_plan() -> None:
             body='added',
         ),
     ]
+
+
+def test_prepare_apply_plan_materializes_pending() -> None:
+    def unit(name: str, body: str) -> UnitState:
+        return UnitState(unit_file=Path('/units') / name, body=body, cmdline=None)
+
+    current = [unit('changed.service', 'old')]
+    pending = (state for state in [unit('changed.service', 'new'), unit('added.service', 'added')])
+
+    plan = prepare_apply_plan(current=current, pending=pending)
+
+    assert plan.pending_units == {'changed.service', 'added.service'}
+    assert [update.unit for update, _diff in plan.updates] == ['changed.service']
+    assert [add.unit for add in plan.adds] == ['added.service']
 
 
 def test_delete_order_deletes_timers_before_services() -> None:
@@ -301,11 +315,11 @@ def jobs() -> Iterator[Job]:
     assert job5.when == '00:05'
 
 
-def test_do_lint(tmp_pythonpath: Path) -> None:
+def test_load_state(tmp_pythonpath: Path) -> None:
     def OK(body: str) -> None:
         tpath = Path(tmp_pythonpath) / 'test_drontab.py'
         tpath.write_text(body)
-        do_lint(tab_module='test_drontab')
+        load_state(tab_module='test_drontab')
 
     def FAILS(body: str) -> None:
         with pytest.raises(Exception):

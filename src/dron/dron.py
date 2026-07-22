@@ -7,7 +7,6 @@ from collections.abc import Iterable, Iterator
 from concurrent.futures import ProcessPoolExecutor
 from dataclasses import dataclass
 from difflib import unified_diff
-from itertools import tee
 from pathlib import Path
 from subprocess import check_call
 from typing import assert_never
@@ -29,8 +28,6 @@ from .common import (
     unwrap,
 )
 from .systemd import _systemctl
-
-DRON_UNITS_DIR.mkdir(parents=True, exist_ok=True)
 
 
 def verify_units(pre_units: list[tuple[UnitName, Body]]) -> None:
@@ -56,6 +53,7 @@ def verify_unit(*, unit_name: UnitName, body: Body) -> None:
 
 
 def write_unit(*, unit: Unit, body: Body, prefix: Path = DRON_UNITS_DIR) -> None:
+    prefix.mkdir(parents=True, exist_ok=True)
     unit_file = prefix / unit
 
     logger.info(f'writing unit file: {unit_file}')
@@ -153,7 +151,8 @@ class Add:
 
 
 type Action = Update | Delete | Add
-type Plan = Iterable[Action]
+type Diff = tuple[str, ...]
+"""Lines of a unified diff produced by `difflib.unified_diff()`."""
 
 # TODO ugh. not sure how to verify them?
 
@@ -167,7 +166,7 @@ def _delete_order(a: Delete) -> int:
     return 2
 
 
-def compute_plan(*, current: State, pending: State) -> Plan:
+def compute_plan(*, current: State, pending: State) -> Iterator[Action]:
     currentd = OrderedDict((x.unit_file, unwrap(x.body)) for x in current)
     pendingd = OrderedDict((x.unit_file, unwrap(x.body)) for x in pending)
 
@@ -188,87 +187,123 @@ def compute_plan(*, current: State, pending: State) -> Plan:
                 raise AssertionError("Can't happen")
 
 
-# TODO it's not apply, more like 'compute' and also plan is more like a diff between states?
-def apply_state(pending: State) -> None:
-    if IS_SYSTEMD:
-        current = list(managed_units(with_body=True))
-    else:
-        current = list(launchd.launchd_units(with_body=True))
+@dataclass(frozen=True)
+class ApplyPlan:
+    """Prepared comparison of currently managed units and desired drontab state."""
 
-    pending_units = {s.unit_file.name for s in pending}
+    current_count: int
+    """Number of currently managed units, used to detect a plan that deletes everything."""
 
-    def is_always_running(unit_path: Path) -> bool:
-        name = unit_path.stem
-        has_timer = f'{name}.timer' in pending_units
-        # TODO meh. not ideal
-        return not has_timer
+    pending_units: frozenset[Unit]
+    """Names of all desired units, used to distinguish timerless services."""
 
-    plan: list[Action] = list(compute_plan(current=current, pending=pending))
+    deletes: tuple[Delete, ...]
+    """Units that are currently managed but absent from the desired state."""
+
+    nochange: tuple[Update, ...]
+    """Units present in both states whose generated bodies are identical."""
+
+    updates: tuple[tuple[Update, Diff], ...]
+    """Units present in both states whose bodies differ, paired with their unified diffs."""
+
+    adds: tuple[Add, ...]
+    """Units present in the desired state but not currently managed."""
+
+
+def prepare_apply_plan(*, current: State, pending: State) -> ApplyPlan:
+    current = list(current)
+    pending = list(pending)
 
     deletes: list[Delete] = []
     adds: list[Add] = []
-    _updates: list[Update] = []
+    updates_or_nochange: list[Update] = []
 
-    for a in plan:
-        if isinstance(a, Delete):
-            deletes.append(a)
-        elif isinstance(a, Add):
-            adds.append(a)
-        elif isinstance(a, Update):
-            _updates.append(a)
+    for action in compute_plan(current=current, pending=pending):
+        if isinstance(action, Delete):
+            deletes.append(action)
+        elif isinstance(action, Add):
+            adds.append(action)
+        elif isinstance(action, Update):
+            updates_or_nochange.append(action)
         else:
-            assert_never(a)
+            assert_never(action)
 
-    if len(deletes) == len(current) and len(deletes) > 0:
+    nochange: list[Update] = []
+    updates: list[tuple[Update, Diff]] = []
+
+    for update in updates_or_nochange:
+        diff = tuple(
+            unified_diff(
+                update.old_body.splitlines(keepends=True),
+                update.new_body.splitlines(keepends=True),
+            )
+        )
+        if len(diff) == 0:
+            nochange.append(update)
+        else:
+            updates.append((update, diff))
+
+    return ApplyPlan(
+        current_count=len(current),
+        pending_units=frozenset(state.unit_file.name for state in pending),
+        deletes=tuple(deletes),
+        nochange=tuple(nochange),
+        updates=tuple(updates),
+        adds=tuple(adds),
+    )
+
+
+def report_apply_plan(*, plan: ApplyPlan, dry_run: bool) -> None:
+    prefix = '[dry run] ' if dry_run else ''
+    logger.info(f'{prefix}no change: {len(plan.nochange)}')
+    logger.info(f'{prefix}deleting : {len(plan.deletes)}')
+    logger.info(f'{prefix}updating : {len(plan.updates)}')
+    logger.info(f'{prefix}adding   : {len(plan.adds)}')
+
+    for delete in plan.deletes:
+        logger.info(f'{prefix}deleting {delete.unit}')
+    for update, diff in plan.updates:
+        logger.info(f'{prefix}updating {update.unit}')
+        sys.stderr.writelines(diff)
+    for add in plan.adds:
+        logger.info(f'{prefix}adding {add.unit}')
+
+
+def execute_apply_plan(*, plan: ApplyPlan) -> None:
+    deletes = plan.deletes
+    updates = plan.updates
+    adds = plan.adds
+
+    if len(deletes) == plan.current_count and len(deletes) > 0:
         msg = "Trying to delete all managed jobs"
         if click.confirm(f'{msg}. Are you sure?', default=False):
             pass
         else:
             raise RuntimeError(msg)
 
-    type Diff = list[str]
-    nochange: list[Update] = []
-    updates: list[tuple[Update, Diff]] = []
-
-    for u in _updates:
-        diff: Diff = list(
-            unified_diff(
-                u.old_body.splitlines(keepends=True),
-                u.new_body.splitlines(keepends=True),
-            )
-        )
-        if len(diff) == 0:
-            nochange.append(u)
-        else:
-            updates.append((u, diff))
-
-    # TODO list unit names here?
-    logger.info(f'no change: {len(nochange)}')
-    logger.info(f'disabling: {len(deletes)}')
-    logger.info(f'updating : {len(updates)}')
-    logger.info(f'adding   : {len(adds)}')
+    def is_always_running(unit_path: Path) -> bool:
+        name = unit_path.stem
+        has_timer = f'{name}.timer' in plan.pending_units
+        # TODO meh. not ideal
+        return not has_timer
 
     deletes_ordered = sorted(deletes, key=_delete_order)
 
-    for a in deletes_ordered:
+    for delete in deletes_ordered:
         if IS_SYSTEMD:
-            check_call(_systemctl('stop', a.unit))
-            check_call(_systemctl('disable', a.unit))
-            # A failed inactive unit treats stop as already done and keeps
-            # its failed state until explicitly reset.
-            check_call(_systemctl('reset-failed', a.unit))
+            check_call(_systemctl('stop', delete.unit))
+            check_call(_systemctl('disable', delete.unit))
+            # A failed inactive unit treats stop as already done and keeps its failed state until explicitly reset.
+            check_call(_systemctl('reset-failed', delete.unit))
         else:
-            launchd.launchctl_unload(unit=Path(a.unit).stem)
-    for a in deletes_ordered:
-        (DRON_UNITS_DIR / a.unit).unlink()
+            launchd.launchctl_unload(unit=Path(delete.unit).stem)
+    for delete in deletes_ordered:
+        (DRON_UNITS_DIR / delete.unit).unlink()
 
-    for u, diff in updates:
-        unit = u.unit
-        unit_file = u.unit_file
-        logger.info(f'updating {unit}')
-        for d in diff:
-            sys.stderr.write(d)
-        write_unit(unit=u.unit, body=u.new_body)
+    for update, _diff in updates:
+        unit = update.unit
+        unit_file = update.unit_file
+        write_unit(unit=update.unit, body=update.new_body)
         if IS_SYSTEMD:
             if unit.endswith('.service') and is_always_running(unit_file):
                 # persistent unit needs a restart to pick up change
@@ -279,20 +314,19 @@ def apply_state(pending: State) -> None:
 
         if unit.endswith('.timer'):
             _daemon_reload()
-            # NOTE: need to be careful -- seems that job might trigger straightaway if it's on interval schedule
-            # so if we change something unrelated (e.g. whitespace), it will start all jobs at the same time??
-            check_call(_systemctl('restart', u.unit))
+            # NOTE: need to be careful -- seems that job might trigger straightaway if it's on interval schedule,
+            #   so if we change something unrelated (e.g. whitespace), it will start all jobs at the same time??
+            check_call(_systemctl('restart', update.unit))
 
-    for a in adds:
-        logger.info(f'adding {a.unit_file}')
+    for add in adds:
         # TODO when we add, assert that previous unit wasn't managed? otherwise we overwrite something
-        write_unit(unit=a.unit, body=a.body)
+        write_unit(unit=add.unit, body=add.body)
 
     # need to load units before starting the timers..
     _daemon_reload()
 
-    for a in adds:
-        unit_file = a.unit_file
+    for add in adds:
+        unit_file = add.unit_file
         unit = unit_file.name
         logger.info(f'enabling {unit}')
         if unit.endswith('.service'):
@@ -307,52 +341,26 @@ def apply_state(pending: State) -> None:
         elif unit.endswith('.plist'):
             launchd.launchctl_load(unit_file=unit_file)
         else:
-            raise AssertionError(a)
+            raise AssertionError(add)
 
     # TODO not sure if this reload is even necessary??
     _daemon_reload()
 
 
-def manage(state: State) -> None:
-    apply_state(pending=state)
+def apply_state(*, pending: State, dry_run: bool) -> None:
+    if IS_SYSTEMD:
+        current = list(managed_units(with_body=True))
+    else:
+        current = list(launchd.launchd_units(with_body=True))
+
+    plan = prepare_apply_plan(current=current, pending=pending)
+    report_apply_plan(plan=plan, dry_run=dry_run)
+    if not dry_run:
+        execute_apply_plan(plan=plan)
 
 
-Error = str
-# TODO perhaps, return Plan or error instead?
-
-
-# eh, implicit convention that only one state will be emitted. oh well
-# FIXME rename from lint? just use compileall or something as a syntax check?
-def lint(tab_module: str) -> Iterator[Exception | State]:
-    # TODO tbh compileall is pointless
-    # - we can't find out source names property without importing
-    # - we'll find out about errors during importing anyway
-
-    try:
-        jobs = load_jobs(tab_module)
-    except Exception as e:
-        # TODO could add better logging here? 'i.e. error while loading jobs'
-        logger.exception(e)
-        yield e
-        return
-
-    try:
-        state = list(make_state(jobs))
-    except Exception as e:
-        logger.exception(e)
-        yield e
-        return
-
-    yield state
-
-
-def do_lint(tab_module: str) -> State:
-    eit, vit = tee(lint(tab_module))
-    errors = [r for r in eit if isinstance(r, Exception)]
-    values = [r for r in vit if not isinstance(r, Exception)]
-    assert len(errors) == 0, errors
-    [state] = values
-    return state
+def manage(*, state: State, dry_run: bool = False) -> None:
+    apply_state(pending=state, dry_run=dry_run)
 
 
 def _import_jobs(tab_module: str) -> list[Job]:
@@ -375,10 +383,13 @@ def load_jobs(tab_module: str) -> Iterator[Job]:
         emitted[job.unit_name] = job
 
 
-def apply(tab_module: str) -> None:
-    # TODO rename do_lint to get_state?
-    state = do_lint(tab_module)
-    manage(state=state)
+def load_state(*, tab_module: str) -> list[UnitState]:
+    return list(make_state(load_jobs(tab_module=tab_module)))
+
+
+def apply(*, tab_module: str, dry_run: bool) -> None:
+    state = load_state(tab_module=tab_module)
+    manage(state=state, dry_run=dry_run)
 
 
 get_entries_for_monitor = systemd.get_entries_for_monitor if IS_SYSTEMD else launchd.get_entries_for_monitor

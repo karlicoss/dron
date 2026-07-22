@@ -409,6 +409,8 @@ def get_entries_for_monitor(managed: State, *, params: MonitorParams) -> list[Mo
 
         pid = s.pid
 
+        # launchd has no supported API for retrieving the next scheduled firing.
+        # launchctl's unstable printed output does not expose one either.
         entries.append(
             MonitorEntry(
                 unit=name,

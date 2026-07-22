@@ -117,7 +117,6 @@ Commands:
   apply      Apply drontab (like 'crontab' with no args)
   debug      Print some debug info
   job        Actions on individual jobs
-  lint
   monitor    Monitor services/timers managed by dron
   print      Parse and print drontab
   uninstall  Remove all managed jobs (will ask for confirmation)
@@ -139,10 +138,9 @@ Commands:
 
 Common commands:
 
-- =dron apply= imports the drontab module, generates backend units, diffs them
-  against managed units, and applies the plan
-- =dron lint= imports the drontab module and verifies the generated units without
-  applying changes
+- =dron apply --dry-run= imports the drontab module, verifies and generates
+  backend units, and shows the add/update/delete plan without applying it
+- =dron apply= applies that plan
 - =dron print= shows parsed jobs, with =--pretty= for a table
 - =dron monitor= opens the Textual monitor; =dron monitor --once= prints a
   one-shot table
@@ -150,8 +148,7 @@ Common commands:
 - =dron job run <unit>= runs one job immediately, ignoring the timer
 - =dron uninstall= removes all managed jobs after confirmation
 
-Use =--module= with =apply=, =lint=, and =print= to point at a different drontab
-module.
+Use =--module= with =apply= and =print= to point at a different drontab module.
 
 * Job syntax
 

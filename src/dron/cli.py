@@ -19,7 +19,6 @@ from .common import (
 )
 from .dron import (
     apply,
-    do_lint,
     get_entries_for_monitor,
     load_jobs,
     manage,
@@ -126,17 +125,6 @@ arg_no_verify = click.option(
 )
 
 
-@cli.command('lint')
-@arg_tab_module
-@arg_no_verify
-def cmd_lint(*, tab_module: str) -> None:
-    # FIXME lint command isn't very interesting now btw?
-    # perhaps instead, either add dry mode to apply
-    # or split into the 'diff' part and side effect apply part
-    _state = do_lint(tab_module)
-    logger.info('all good')
-
-
 @cli.command('print')
 @arg_tab_module
 @click.option('--pretty', is_flag=True, help='Pretty print')
@@ -165,9 +153,11 @@ def cmd_print(*, tab_module: str, pretty: bool) -> None:
 # TODO --force?
 @cli.command('apply')
 @arg_tab_module
-def cmd_apply(*, tab_module: str) -> None:
+@click.option('--dry-run', is_flag=True, help='Show planned changes without applying them')
+@arg_no_verify
+def cmd_apply(*, tab_module: str, dry_run: bool) -> None:
     """Apply drontab (like 'crontab' with no args)"""
-    apply(tab_module)
+    apply(tab_module=tab_module, dry_run=dry_run)
 
 
 @cli.command('debug')
@@ -182,7 +172,7 @@ def cmd_debug() -> None:
 def cmd_uninstall() -> None:
     """Remove all managed jobs (will ask for confirmation)"""
     click.confirm('Going to remove all dron managed jobs. Continue?', default=True, abort=True)
-    manage([])
+    manage(state=[])
 
 
 @cli.group('job')
