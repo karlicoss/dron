@@ -291,10 +291,10 @@ def execute_apply_plan(*, plan: ApplyPlan) -> None:
 
     for delete in deletes_ordered:
         if IS_SYSTEMD:
-            check_call(_systemctl('stop', delete.unit))
-            check_call(_systemctl('disable', delete.unit))
             # A failed inactive unit treats stop as already done and keeps its failed state until explicitly reset.
             check_call(_systemctl('reset-failed', delete.unit))
+            check_call(_systemctl('stop', delete.unit))
+            check_call(_systemctl('disable', delete.unit))
         else:
             launchd.launchctl_unload(unit=Path(delete.unit).stem)
     for delete in deletes_ordered:
