@@ -13,7 +13,7 @@ from itertools import groupby
 from pathlib import Path
 from subprocess import PIPE, Popen, run
 from tempfile import TemporaryDirectory
-from typing import Any, cast
+from typing import Any, Protocol, cast
 from zoneinfo import ZoneInfo
 
 from .api import (
@@ -234,12 +234,17 @@ def _sd(s: str) -> str:
     return f'org.freedesktop.systemd1{s}'
 
 
+class DBusProperties(Protocol):
+    def Get(self, interface: str, name: str) -> Any: ...
+
+
 class BusManager:
     def __init__(self) -> None:
         # Keep this dynamic because dbus-python is missing on macos; and it's very difficult to convince type checkers to handle that
         dbus = importlib.import_module('dbus')
 
         self.Interface = cast(Any, dbus).Interface  # meh
+        self.DBusException = cast(Any, dbus).DBusException
 
         # NOTE: private=True is important here! Otherwise SessionBus() returns a shared connection.
         # If that connection gets into a broken state (e.g. timeouts), it will persist across BusManager instantiations,
@@ -249,17 +254,27 @@ class BusManager:
         systemd = self.bus.get_object(_sd(''), '/org/freedesktop/systemd1')
         self.manager = self.Interface(systemd, dbus_interface=_sd('.Manager'))
 
-    def properties(self, u: Unit):
-        service_unit = self.manager.GetUnit(u)
+    def properties(self, u: Unit) -> DBusProperties | None:
+        """Return the unit properties interface, or None if the unit disappeared."""
+        try:
+            service_unit = self.manager.GetUnit(u)
+        except self.DBusException as e:
+            if e.get_dbus_name() == _sd('.NoSuchUnit'):
+                return None
+            raise
+
         service_proxy = self.bus.get_object(_sd(''), str(service_unit))
-        return self.Interface(service_proxy, dbus_interface='org.freedesktop.DBus.Properties')
+        return cast(
+            DBusProperties,
+            self.Interface(service_proxy, dbus_interface='org.freedesktop.DBus.Properties'),
+        )
 
     @staticmethod  # meh
-    def prop(obj, schema: str, name: str):
+    def prop(obj: DBusProperties, schema: str, name: str) -> Any:
         return obj.Get(_sd(schema), name)
 
     @classmethod
-    def exec_start(cls, props) -> Sequence[str]:
+    def exec_start(cls, props: DBusProperties) -> Sequence[str]:
         dbus_exec_start = cls.prop(props, '.Service', 'ExecStart')
         return [str(x) for x in dbus_exec_start[0][1]]
 
@@ -276,6 +291,8 @@ def systemd_state(*, with_body: bool) -> State:
 
         # todo annoying, this call still takes some time... but whatever ok
         props = bus.properties(name)
+        if props is None:
+            continue
 
         # useful for debugging, can also use .Service if it's not a timer
         # all_properties = props.GetAll(_sd('.Unit'))
@@ -400,6 +417,10 @@ def get_entries_for_monitor(managed: State, *, params: MonitorParams) -> list[Mo
             assert len(gr) == 1, gr
             [service] = gr
             timer = None
+            # A service can disappear after ListUnits(), leaving its timer as an incomplete group.
+            # Skip it until the next refresh instead of treating the timer as an always-running service.
+            if service.unit_file.suffix == '.timer':
+                continue
 
         service_props = service.dbus_properties
 
@@ -409,7 +430,8 @@ def get_entries_for_monitor(managed: State, *, params: MonitorParams) -> list[Mo
             cal = BusManager.prop(props, '.Timer', 'TimersCalendar')
             next_ = BusManager.prop(props, '.Timer', 'NextElapseUSecRealtime')
 
-            # note: there is also bus.prop(props, '.Timer', 'LastTriggerUSec'), but makes more sense to use unit to account for manual runs
+            # There is also bus.prop(props, '.Timer', 'LastTriggerUSec').
+            # Using the service timestamp makes more sense because it accounts for manual runs.
             last = BusManager.prop(service_props, '.Unit', 'ActiveExitTimestamp')
 
             schedule = cal[0][1]  # TODO is there a more reliable way to retrieve it??
