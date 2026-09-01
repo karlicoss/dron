@@ -8,9 +8,10 @@ from datetime import datetime
 from typing import Any, ClassVar, override
 
 from rich.text import Text
-from textual import work
+from textual import events, work
 from textual.app import App, ComposeResult
 from textual.binding import Binding
+from textual.timer import Timer
 from textual.widgets import DataTable, Input, RichLog, Static
 from textual.widgets.data_table import RowKey
 
@@ -53,11 +54,27 @@ def get_entries(params: MonitorParams, *, mock: bool = False) -> MonitorEntries:
 
 class Clock(Static):
     """
-    Displays current time with millisecond precision. Useful for debugging.
+    Displays monitor status. Useful for debugging.
     """
 
+    def __init__(self) -> None:
+        super().__init__()
+        self.refreshed_at: datetime | None = None
+        self.focused = True
+        self.update_status()
+
+    def update_status(self) -> None:
+        focus = 'focused' if self.focused else 'blurred'
+        refreshed_at = '--' if self.refreshed_at is None else self.refreshed_at.isoformat()
+        self.update(f'focus: {focus} | refreshed at: {refreshed_at}')
+
     def update_time(self, dt: datetime) -> None:
-        self.update(f"refreshed at: {dt.isoformat()}")
+        self.refreshed_at = dt
+        self.update_status()
+
+    def update_focus(self, *, focused: bool) -> None:
+        self.focused = focused
+        self.update_status()
 
 
 class UnitsTable(DataTable):
@@ -220,6 +237,8 @@ class SearchInput(Input):
 
 
 class MonitorApp(App):
+    UNFOCUSED_REFRESH_EVERY: ClassVar[float] = 5 * 60
+
     BINDINGS: ClassVar = [
         Binding("/", "search", "Search"),
         Binding("q", "quit", "Quit"),
@@ -260,6 +279,7 @@ class MonitorApp(App):
         self.monitor_params = monitor_params
         self.refresh_every = refresh_every
         self.show_logger = show_logger
+        self._refresh_timer: Timer | None = None
 
     @override
     def compose(self) -> ComposeResult:
@@ -294,6 +314,14 @@ class MonitorApp(App):
         if isinstance(event.control, UnitsTable):
             event.control.show_details_in_pager(event.row_key)
 
+    def on_app_focus(self, event: events.AppFocus) -> None:  # noqa: ARG002
+        self.clock.update_focus(focused=True)
+        self._schedule_update(delay=0)
+
+    def on_app_blur(self, event: events.AppBlur) -> None:  # noqa: ARG002
+        self.clock.update_focus(focused=False)
+        self._schedule_update(delay=self.UNFOCUSED_REFRESH_EVERY)
+
     # @override  # TODO weird.. type checker complains it's not present in base class?
     def on_mount(self) -> None:
         if not self.show_logger:
@@ -303,13 +331,12 @@ class MonitorApp(App):
 
         self._update_entries()
 
-        # Hmm tried using set_interval..
-        # But I think if refresh interval is low enough, it just cancels previous requests
-        # , so ends up never rendering anything??
+        # I tried using set_interval, but if the refresh interval is low enough, it seems to cancel previous requests,
+        #   so nothing ends up rendering.
         # self.set_interval(interval=self.refresh_every, callback=self._update_entries)
-        # Instead relying on set_timer and tail call in update_entries_ui
+        # Instead, rely on set_timer and the tail call in update_entries_ui.
 
-    # exclusive cancels previous call if it happens still to run
+    # exclusive=True cancels the previous call if it is still running.
     @work(exclusive=True, thread=True)
     def _update_entries(self) -> None:
         # NOTE: this only goes into dev console
@@ -322,6 +349,15 @@ class MonitorApp(App):
         # TODO hmm it likely still spending some time in CPU, so not sure how much thread would help
         self.call_from_thread(self.update_entries_ui, entries)
 
+    def _schedule_update(self, *, delay: float) -> None:
+        if self._refresh_timer is not None:
+            self._refresh_timer.stop()
+            self._refresh_timer = None
+        if delay > 0:
+            self._refresh_timer = self.set_timer(delay=delay, callback=self._update_entries)
+        else:
+            self._update_entries()
+
     def update_entries_ui(self, entries: MonitorEntries) -> None:
         updated_at = datetime.now()
 
@@ -333,11 +369,8 @@ class MonitorApp(App):
         self.clock.update_time(updated_at)
         self.rich_log.write(f'{updated_at} UPDATED!')
 
-        if self.refresh_every > 0:
-            self.set_timer(delay=self.refresh_every, callback=self._update_entries)
-        else:
-            # update as fast as possible
-            self._update_entries()
+        refresh_every = self.refresh_every if self.clock.focused else self.UNFOCUSED_REFRESH_EVERY
+        self._schedule_update(delay=refresh_every)
 
     def action_search(self) -> None:
         search_input = self.search_input
