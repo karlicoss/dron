@@ -1,6 +1,5 @@
 #!/usr/bin/env python3
 import argparse
-import os
 import shlex
 import sys
 from collections.abc import Iterator
@@ -11,12 +10,6 @@ from typing import NoReturn
 from loguru import logger
 
 LOG_DIR = Path('~/Library/Logs/dron').expanduser()
-
-# OSX/launchd is a piece of shit and doesn't seem possible to just set it globally everywhere?
-# this works: launchctl setenv PYTHONPYCACHEPREFIX $PYTHONPYCACHEPREFIX
-# however unclear how to set it in a way that it's running before all other agents
-# allegedly possible to use global LaunchDaemon running as root, but doesn't seem possible to execute launchctl commands as other user from launchd plist??
-PYCACHE_PATH = Path('~/.cache/pycache').expanduser()
 
 
 def main() -> NoReturn:
@@ -50,14 +43,10 @@ def main() -> NoReturn:
 
     logger.add(log_file, rotation='100 MB')  # todo configurable? or rely on osx rotation?
 
-    env = {**os.environ}
-    if "PYTHONPYCACHEPREFIX" not in env:
-        env["PYTHONPYCACHEPREFIX"] = str(PYCACHE_PATH)
-
     # hmm, a bit crap transforming everything to stdout? but not much we can do?
     captured_log = []
     try:
-        with Popen([*prefix, *cmd], stdout=PIPE, stderr=STDOUT, env=env) as po:
+        with Popen([*prefix, *cmd], stdout=PIPE, stderr=STDOUT) as po:
             out = po.stdout
             assert out is not None
             for line in out:
