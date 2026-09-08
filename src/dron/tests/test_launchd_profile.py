@@ -61,14 +61,12 @@ def test_profile_environment(tmp_path: Path, *, load_profile: bool, exit_code: i
         data = json.loads(path.read_text())
         assert data['value'] == ('from profile' if load_profile else 'inherited')
         assert data['path'] == (f'{user_home}/bin:{os.defpath}' if load_profile else os.defpath)
-        assert data['pycache'] == str(user_home / ('python cache' if load_profile else '.cache/pycache'))
+        assert data['pycache'] == (str(user_home / 'python cache') if load_profile else None)
         return data
 
     assert read_result(job_result)['args'] == arguments
     if exit_code != 0:
-        notification = json.loads(notification_result.read_text())
-        if load_profile:
-            read_result(notification_result)
+        notification = read_result(notification_result)
         assert f'exit code: {exit_code}' in notification['stdin']
     else:
         assert not notification_result.exists()
