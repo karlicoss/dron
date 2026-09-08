@@ -23,6 +23,9 @@ def main() -> NoReturn:
     p = argparse.ArgumentParser()
     p.add_argument('--notify', action='append')
     p.add_argument('--job', required=True)
+    p.add_argument(
+        '--load-profile', action='store_true', help='Source ~/.profile for the job and failure notifications'
+    )
     # hmm, this doesn't work with keyword args??
     # p.add_argument('cmd', nargs=argparse.REMAINDER)
     args, rest = p.parse_known_args()
@@ -32,6 +35,15 @@ def main() -> NoReturn:
 
     notify_cmds = [] if args.notify is None else args.notify
     job = args.job
+
+    prefix: list[str] = []
+    if args.load_profile:
+        # Source .profile explicitly so .bash_profile cannot shadow it.
+        prefix = [
+            '/bin/bash', '--noprofile', '--norc', '-c',
+            '. "$HOME/.profile" && exec "$@"',
+            'dron',
+        ]  # fmt: skip
 
     LOG_DIR.mkdir(parents=True, exist_ok=True)
     log_file = LOG_DIR / f'{job}.log'
@@ -45,7 +57,7 @@ def main() -> NoReturn:
     # hmm, a bit crap transforming everything to stdout? but not much we can do?
     captured_log = []
     try:
-        with Popen(cmd, stdout=PIPE, stderr=STDOUT, env=env) as po:
+        with Popen([*prefix, *cmd], stdout=PIPE, stderr=STDOUT, env=env) as po:
             out = po.stdout
             assert out is not None
             for line in out:
@@ -79,7 +91,7 @@ def main() -> NoReturn:
     for notify_cmd in notify_cmds:
         logger.info(f'notifying: {notify_cmd}')
         try:
-            with Popen(notify_cmd, shell=True, stdin=PIPE, stdout=PIPE, stderr=PIPE) as po:
+            with Popen([*prefix, '/bin/sh', '-c', notify_cmd], stdin=PIPE, stdout=PIPE, stderr=PIPE) as po:
                 sin = po.stdin
                 assert sin is not None
                 for line in payload():

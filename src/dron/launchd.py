@@ -84,12 +84,13 @@ def launchctl_reload(*, unit: Unit, unit_file: UnitFile) -> None:
     launchctl_load(unit_file=unit_file)
 
 
-def launchd_wrapper(*, job: str, on_failure: list[str]) -> list[str]:
+def launchd_wrapper(*, job: str, on_failure: list[str], load_profile: bool = False) -> list[str]:
     return [
         sys.executable,
         '-B',  # do not write byte code, otherwise it shits into dron directory if we're using editable install
         '-m', 'dron.launchd_wrapper',
         *itertools.chain.from_iterable(('--notify', n) for n in on_failure),
+        *(['--load-profile'] if load_profile else []),
         '--job', job,
         '--',
     ]  # fmt: skip
@@ -143,6 +144,7 @@ def plist(
     command: Command,
     on_failure: Sequence[OnFailureAction],
     when: When | None = None,
+    load_profile: bool = False,
 ) -> str:
     """
     Generate a launchd plist.
@@ -219,7 +221,7 @@ def plist(
     # but even after that it still only shows executable script name. ugh
     # program_argv = (unit_name, *cmd[1:])
     program_argv = (
-        *launchd_wrapper(job=unit_name, on_failure=on_failure),
+        *launchd_wrapper(job=unit_name, on_failure=on_failure, load_profile=load_profile),
         *cmd,
     )
     del cmd

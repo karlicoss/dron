@@ -27,6 +27,7 @@ class Job:
     unit_name: UnitName
     on_failure: Sequence[OnFailureAction]
     kwargs: dict[str, str]
+    load_profile: bool = False
 
 
 # staticmethod isn't callable directly prior to 3.10
@@ -53,12 +54,16 @@ def job(
     *,
     unit_name: str | None = None,
     on_failure: Sequence[OnFailureAction] = (notify.email_local,),
+    load_profile: bool = False,
     **kwargs,
 ) -> Job:
     """
     when: if None, then timer won't be created (still allows running job manually)
     unit_name: if None, then will attempt to guess from source code (experimental!)
+    load_profile: source ~/.profile for jobs and failure notifications (macOS only)
     """
+    # Background and alternatives: https://github.com/karlicoss/dron/blob/master/doc/launchd_environment.md
+
     assert 'extra_email' not in kwargs, unit_name  # deprecated
 
     stacklevel: int = kwargs.pop('stacklevel', 1)
@@ -92,6 +97,7 @@ def job(
         unit_name=unit_name,
         on_failure=on_failure,
         kwargs=kwargs,
+        load_profile=load_profile,
     )
 
 
