@@ -166,6 +166,20 @@ creates a service without a timer, so it can still be run manually with
 Any extra keyword arguments are passed to the backend unit generator, which is
 useful when you need systemd-specific service properties.
 
+=load_profile=True= passes =--load-profile= to the macOS launchd wrapper, which sources =~/.profile= in noninteractive =/bin/bash= when launching jobs and failure notifications.
+The job and its failure notification commands inherit the exported variables, including Python's startup settings.
+This runs on every invocation and does not depend on the launchd session environment being initialized first.
+This is opt-in and only supported by the launchd backend.
+
+To enable it by default in a shared macOS drontab module:
+
+#+begin_src python :eval no
+from functools import partial
+from dron.api import job as dron_job
+
+job = partial(dron_job, load_profile=True)
+#+end_src
+
 * Caveats
 
 - =launchd= support intentionally has a smaller schedule surface than =systemd=

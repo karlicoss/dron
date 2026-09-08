@@ -59,6 +59,7 @@ def jobs() -> Iterator[Job]:
     assert job1.when == '01:10'
     assert job1.command == ['/path/to/command.py', 'some', 'args', '1']
     assert job1.unit_name == 'job1'
+    assert not job1.load_profile
 
     assert job2.when == '02:10'
     assert job2.command == ['/path/to/command.py', 'some', 'args', '2']
@@ -272,10 +273,12 @@ def test_jobs_auto_naming(tmp_pythonpath: Path) -> None:
     tpath = Path(tmp_pythonpath) / 'test_drontab.py'
     tpath.write_text(
         '''
+from functools import partial
 from typing import Iterator
 
-from dron.api import job, Job
+from dron.api import job as dron_job, Job
 
+job = partial(dron_job, load_profile=True)
 
 job2 = job(
     '00:02',
@@ -292,7 +295,7 @@ def jobs() -> Iterator[Job]:
         'echo',
     )
     yield job2
-    yield job('00:00', 'echo', unit_name='job_named')
+    yield job('00:00', 'echo', unit_name='job_named', load_profile=False)
     yield job_1
     job4 = \
        job('00:04', 'echo')
@@ -313,6 +316,8 @@ def jobs() -> Iterator[Job]:
     assert job4.when == '00:04'
     assert job5.unit_name == 'job5'
     assert job5.when == '00:05'
+    assert all(j.load_profile for j in (job2, job_1, job5, job4))
+    assert not job_named.load_profile
 
 
 def test_load_state(tmp_pythonpath: Path) -> None:

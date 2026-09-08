@@ -86,6 +86,7 @@ def make_state(jobs: Iterable[Job]) -> State:
         names.add(uname)
 
         if IS_SYSTEMD:
+            assert not j.load_profile, 'load_profile is only supported by the launchd backend'
             s = systemd.service(unit_name=uname, command=j.command, on_failure=j.on_failure, **j.kwargs)
             pre_units.append((uname + '.service', s))
 
@@ -106,7 +107,13 @@ def make_state(jobs: Iterable[Job]) -> State:
             t = systemd.timer(unit_name=uname, when=when)
             pre_units.append((uname + '.timer', t))
         else:
-            p = launchd.plist(unit_name=uname, command=j.command, on_failure=j.on_failure, when=j.when)
+            p = launchd.plist(
+                unit_name=uname,
+                command=j.command,
+                on_failure=j.on_failure,
+                when=j.when,
+                load_profile=j.load_profile,
+            )
             pre_units.append((uname + '.plist', p))
 
     verify_units(pre_units)
