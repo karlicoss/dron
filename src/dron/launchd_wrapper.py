@@ -81,23 +81,25 @@ def main() -> NoReturn:
     for line in payload():
         logger.info(line.decode('utf8').rstrip('\n'))  # meh
 
+    notification_input = b''.join(payload())
     for notify_cmd in notify_cmds:
         logger.info(f'notifying: {notify_cmd}')
+        command = [*prefix, '/bin/sh', '-c', notify_cmd]
         try:
-            with Popen([*prefix, '/bin/sh', '-c', notify_cmd], stdin=PIPE, stdout=PIPE, stderr=PIPE) as po:
-                sin = po.stdin
-                assert sin is not None
-                for line in payload():
-                    sin.write(line)
-                (sout, serr) = po.communicate()
-                for l in sout.decode('utf8', errors='replace').splitlines():
-                    logger.debug(l)
-                for l in serr.decode('utf8', errors='replace').splitlines():
-                    logger.debug(l)
-            assert po.poll() == 0, notify_cmd
+            with Popen(command, stdin=PIPE, stdout=PIPE, stderr=PIPE) as po:
+                # Drain stdout and stderr while writing stdin so a noisy notifier cannot deadlock.
+                sout, serr = po.communicate(input=notification_input)
         except Exception as e:
-            logger.error(f'notificaiton failed: {notify_cmd}')
+            logger.error(f'notification failed: {notify_cmd}')
             logger.exception(e)
+            continue
+
+        for line in sout.decode('utf8', errors='replace').splitlines():
+            logger.debug(line)
+        for line in serr.decode('utf8', errors='replace').splitlines():
+            logger.debug(line)
+        if po.returncode != 0:
+            logger.error(f'notification failed: {notify_cmd} (exit code: {po.returncode})')
 
     sys.exit(rc)
 
