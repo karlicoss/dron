@@ -9,6 +9,8 @@ from typing import NoReturn
 
 from loguru import logger
 
+# Standard macOS log directory, also the default for platformdirs.user_log_path('dron').
+# Keep the path explicit to avoid adding a dependency to this macOS-only wrapper.
 LOG_DIR = Path('~/Library/Logs/dron').expanduser()
 
 
@@ -72,7 +74,9 @@ def main() -> NoReturn:
         yield b'output (stdout + stderr):\n\n'
         # TODO shit -- if multiple notifications, can't use generator for captured_log
         # unless we notify simultaneously?
-        yield from captured_log
+        # Replace invalid bytes for text logs and notifications, while keeping stdout unchanged.
+        for line in captured_log:
+            yield line.decode('utf8', errors='replace').encode()
 
     for line in payload():
         logger.info(line.decode('utf8').rstrip('\n'))  # meh
@@ -86,9 +90,9 @@ def main() -> NoReturn:
                 for line in payload():
                     sin.write(line)
                 (sout, serr) = po.communicate()
-                for l in sout.decode('utf8').splitlines():
+                for l in sout.decode('utf8', errors='replace').splitlines():
                     logger.debug(l)
-                for l in serr.decode('utf8').splitlines():
+                for l in serr.decode('utf8', errors='replace').splitlines():
                     logger.debug(l)
             assert po.poll() == 0, notify_cmd
         except Exception as e:
