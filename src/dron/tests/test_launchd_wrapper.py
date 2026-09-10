@@ -5,6 +5,7 @@ import shlex
 import signal
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 import pytest
@@ -98,3 +99,57 @@ def test_notification_pipes_do_not_deadlock(tmp_path: Path, *, notifier_exit_cod
     assert payload.startswith(b'exit code: 7\n')
     assert payload.endswith(output)
     assert (b'notification failed:' in stderr) == (notifier_exit_code != 0)
+
+
+@pytest.mark.parametrize('exit_code', [0, 7])
+def test_output_is_logged_before_job_exits(tmp_path: Path, *, exit_code: int) -> None:
+    release = tmp_path / 'release'
+    job = tmp_path / 'job.py'
+    job.write_text(
+        'import os, sys, time\n'
+        'from pathlib import Path\n'
+        'os.write(1, b"stdout while running\\n")\n'
+        'os.write(2, b"stderr while running\\n")\n'
+        f'while not Path({str(release)!r}).exists():\n'
+        '    time.sleep(0.01)\n'
+        'os.write(1, b"final output")\n'
+        f'sys.exit({exit_code})\n'
+    )
+    log = tmp_path / 'Library/Logs/dron/live-log-test.log'
+    forwarded = tmp_path / 'stdout'
+    command = launchd_wrapper(job='live-log-test', on_failure=[])
+    with (
+        forwarded.open('wb') as stdout,
+        subprocess.Popen(
+            [*command, sys.executable, '-B', str(job)],
+            env={'HOME': str(tmp_path), 'PATH': os.defpath},
+            stdout=stdout,
+            stderr=subprocess.PIPE,
+            start_new_session=True,
+        ) as process,
+    ):
+        try:
+            deadline = time.monotonic() + 10
+            while (
+                not log.exists()
+                or b'stderr while running' not in log.read_bytes()
+                or b'stderr while running' not in forwarded.read_bytes()
+            ):
+                assert time.monotonic() < deadline, 'Output was not logged and forwarded while the job was running'
+                time.sleep(0.01)
+            assert process.poll() is None
+            release.touch()
+            _, stderr = process.communicate(timeout=10)
+        finally:
+            if process.poll() is None:
+                os.killpg(process.pid, signal.SIGKILL)
+                process.wait()
+
+    assert process.returncode == exit_code, stderr
+    assert forwarded.read_bytes() == b'stdout while running\nstderr while running\nfinal output'
+    logged = log.read_text()
+    for line in ['stdout while running', 'stderr while running', 'final output']:
+        assert logged.count(line) == 1
+        assert line.encode() not in stderr
+    if exit_code != 0:
+        assert f'exit code: {exit_code}' in logged
