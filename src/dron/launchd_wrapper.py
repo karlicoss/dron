@@ -14,6 +14,23 @@ from loguru import logger
 LOG_DIR = Path('~/Library/Logs/dron').expanduser()
 
 
+def _with_profile(command: list[str], *, allow_profile_failure: bool) -> list[str]:
+    # Source .profile explicitly so .bash_profile cannot shadow it.
+    if allow_profile_failure:
+        # An EXIT trap still attempts notification if .profile calls exit or enables errexit.
+        # exec replaces the shell, so a failed notifier is not retried.
+        script = 'trap \'exec "$@"\' EXIT; . "$HOME/.profile"'
+    else:
+        # Testing the source command with && or if would suppress errexit inside .profile.
+        script = (
+            '. "$HOME/.profile"\n'
+            'dron_profile_status=$?\n'
+            '[ "$dron_profile_status" -eq 0 ] || exit "$dron_profile_status"\n'
+            'exec "$@"'
+        )
+    return ['/bin/bash', '--noprofile', '--norc', '-c', script, 'dron', *command]
+
+
 def main() -> NoReturn:
     p = argparse.ArgumentParser()
     p.add_argument('--notify', action='append')
@@ -31,15 +48,6 @@ def main() -> NoReturn:
     notify_cmds = [] if args.notify is None else args.notify
     job = args.job
 
-    prefix: list[str] = []
-    if args.load_profile:
-        # Source .profile explicitly so .bash_profile cannot shadow it.
-        prefix = [
-            '/bin/bash', '--noprofile', '--norc', '-c',
-            '. "$HOME/.profile" && exec "$@"',
-            'dron',
-        ]  # fmt: skip
-
     LOG_DIR.mkdir(parents=True, exist_ok=True)
     log_file = LOG_DIR / f'{job}.log'
 
@@ -52,7 +60,7 @@ def main() -> NoReturn:
 
     # hmm, a bit crap transforming everything to stdout? but not much we can do?
     captured_log = []
-    command = [*prefix, *cmd]
+    command = _with_profile(cmd, allow_profile_failure=False) if args.load_profile else cmd
     try:
         po = Popen(command, stdout=PIPE, stderr=STDOUT)
     except Exception as e:
@@ -94,7 +102,10 @@ def main() -> NoReturn:
     notification_input = b''.join(payload())
     for notify_cmd in notify_cmds:
         logger.info(f'notifying: {notify_cmd}')
-        command = [*prefix, '/bin/sh', '-c', notify_cmd]
+        command = ['/bin/sh', '-c', notify_cmd]
+        if args.load_profile:
+            # A broken profile must not prevent us from reporting the job failure it caused.
+            command = _with_profile(command, allow_profile_failure=True)
         try:
             with Popen(command, stdin=PIPE, stdout=PIPE, stderr=PIPE) as po:
                 # Drain stdout and stderr while writing stdin so a noisy notifier cannot deadlock.
