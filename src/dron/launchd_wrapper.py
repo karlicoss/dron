@@ -43,27 +43,40 @@ def main() -> NoReturn:
     LOG_DIR.mkdir(parents=True, exist_ok=True)
     log_file = LOG_DIR / f'{job}.log'
 
+    logger.remove()
+    # Job output is already forwarded to stdout, so only mirror wrapper diagnostics to stderr.
+    logger.add(sys.stderr, filter=lambda record: record['extra'].get('job_output') is not True)
+    # TODO add retention so old rotated files are eventually deleted.
     logger.add(log_file, rotation='100 MB')  # todo configurable? or rely on osx rotation?
+    output_logger = logger.bind(job_output=True)
 
     # hmm, a bit crap transforming everything to stdout? but not much we can do?
     captured_log = []
+    command = [*prefix, *cmd]
     try:
-        with Popen([*prefix, *cmd], stdout=PIPE, stderr=STDOUT) as po:
+        po = Popen(command, stdout=PIPE, stderr=STDOUT)
+    except Exception as e:
+        # Popen itself can fail, for example due to permission errors.
+        logger.exception(e)
+        captured_log.append(str(e).encode('utf8'))
+        rc = 123
+    else:
+        with po:
             out = po.stdout
             assert out is not None
             for line in out:
                 captured_log.append(line)
+                output_logger.info(line.decode('utf8', errors='replace').removesuffix('\n'))
                 sys.stdout.buffer.write(line)
-        rc = po.poll()
+                sys.stdout.buffer.flush()
+        rc = po.returncode
 
-        if rc == 0:
-            # short circuit
-            sys.exit(0)
-    except Exception as e:
-        # Popen istelf still fail due to permission denied or something
-        logger.exception(e)
-        captured_log.append(str(e).encode('utf8'))
-        rc = 123
+    assert rc is not None
+    if rc == 0:
+        # short circuit
+        sys.exit(0)
+
+    logger.error(f'exit code: {rc}; command: {shlex.join(cmd)}')
 
     def payload() -> Iterator[bytes]:
         yield f"exit code: {rc}\n".encode()
@@ -74,12 +87,9 @@ def main() -> NoReturn:
         yield b'output (stdout + stderr):\n\n'
         # TODO shit -- if multiple notifications, can't use generator for captured_log
         # unless we notify simultaneously?
-        # Replace invalid bytes for text logs and notifications, while keeping stdout unchanged.
+        # Replace invalid bytes in the notification payload.
         for line in captured_log:
             yield line.decode('utf8', errors='replace').encode()
-
-    for line in payload():
-        logger.info(line.decode('utf8').rstrip('\n'))  # meh
 
     notification_input = b''.join(payload())
     for notify_cmd in notify_cmds:
