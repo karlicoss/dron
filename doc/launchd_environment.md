@@ -16,6 +16,9 @@ It does not cover our later LoginHook and binary inspection findings, which are 
 
 In dron, the job option adds `--load-profile` to [the launchd wrapper](../src/dron/launchd_wrapper.py).
 The wrapper sources `~/.profile` in noninteractive `/bin/bash` before executing the job, and does the same separately for each failure notification command.
+If sourcing the profile fails, the job is skipped but the wrapper still attempts failure notifications.
+Notifications use the inherited environment plus any variables exported before the failure.
+The wrapper reports the profile's nonzero exit status, including failures caused by an explicit `exit` or `set -e`.
 This initializes the child processes' environment; the Python wrapper itself keeps its inherited environment.
 Profile changes take effect on the next invocation, with the cost of running the profile for each command.
 This handles dron's processes rather than setting the environment for unrelated GUI applications.

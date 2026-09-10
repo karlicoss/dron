@@ -72,23 +72,52 @@ def test_profile_environment(tmp_path: Path, *, load_profile: bool, exit_code: i
         assert not notification_result.exists()
 
 
-@pytest.mark.parametrize('profile', [None, 'return 9\n'])
-def test_profile_failure_stops_job(tmp_path: Path, profile: str | None) -> None:
+@pytest.mark.parametrize(
+    ('profile', 'exit_codes'),
+    [
+        pytest.param(None, (1,), id='missing'),
+        pytest.param('return 9\n', (9,), id='return'),
+        pytest.param('exit 9\n', (9,), id='exit'),
+        pytest.param('set -e\nfalse\ntrue\n', (1,), id='errexit'),
+        # Bash may return 1 or 2 for this syntax error, depending on its version.
+        pytest.param('if\n', (1, 2), id='syntax-error'),
+    ],
+)
+def test_profile_failure_stops_job_but_not_notifications(
+    tmp_path: Path, *, profile: str | None, exit_codes: tuple[int, ...]
+) -> None:
     if profile is not None:
-        (tmp_path / '.profile').write_text(profile)
+        (tmp_path / '.profile').write_text('export DRON_PROFILE_VALUE="before failure"\n' + profile)
+    notified = tmp_path / 'notification.jsonl'
+    notifier = tmp_path / 'notifier.py'
+    notifier.write_text(
+        'import json, os, sys\n'
+        'from pathlib import Path\n'
+        'record = {"value": os.environ["DRON_PROFILE_VALUE"], "stdin": sys.stdin.read()}\n'
+        'with Path(sys.argv[1]).open("a") as output:\n'
+        '    output.write(json.dumps(record) + "\\n")\n'
+        'sys.exit(3)\n'
+    )
     started = tmp_path / 'job-started'
     body = plist(
         unit_name='profile-failure',
         command=[sys.executable, '-c', 'from pathlib import Path; import sys; Path(sys.argv[1]).touch()', str(started)],
-        on_failure=[],
+        on_failure=[shlex.join([sys.executable, '-B', str(notifier), str(notified)])],
         load_profile=True,
     )
     result = subprocess.run(
         plistlib.loads(body.encode())['ProgramArguments'],
-        env={'HOME': str(tmp_path), 'PATH': os.defpath},
+        env={'HOME': str(tmp_path), 'PATH': os.defpath, 'DRON_PROFILE_VALUE': 'inherited'},
         capture_output=True,
         text=True,
         check=False,
+        timeout=10,
     )
-    assert result.returncode != 0
+    assert result.returncode in exit_codes, result.stderr
     assert not started.exists()
+    [notification] = notified.read_text().splitlines()
+    record = json.loads(notification)
+    assert record['value'] == ('inherited' if profile is None else 'before failure')
+    assert record['stdin'].startswith(f'exit code: {result.returncode}\n')
+    assert 'notification failed:' in result.stderr
+    assert '(exit code: 3)' in result.stderr
