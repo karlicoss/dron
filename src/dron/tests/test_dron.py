@@ -7,9 +7,10 @@ from pathlib import Path
 
 import pytest
 
-from ..common import UnitState
+from ..common import Command, UnitState
 from ..dron import Add, Delete, Update, _delete_order, compute_plan, load_jobs, load_state, prepare_apply_plan
 from ..launchd import _format_calendar_interval, plist
+from ..systemd import service
 
 
 @pytest.fixture
@@ -156,6 +157,29 @@ def test_delete_order_deletes_timers_before_services() -> None:
     service = Delete(unit_file=Path('/units/example.service'))
 
     assert sorted([service, timer], key=_delete_order) == [timer, service]
+
+
+@pytest.mark.parametrize(
+    ('command', 'expected'),
+    [
+        (['/bin/echo', r'one\ntwo'], r'"/bin/echo" "one\\ntwo"'),
+        (['/bin/echo', 'one\ntwo'], r'"/bin/echo" "one\ntwo"'),
+        (['/bin/echo', 'one\rtwo\tthree'], r'"/bin/echo" "one\rtwo\tthree"'),
+        (['/bin/echo', r'\d+'], r'"/bin/echo" "\\d+"'),
+        (['/bin/echo', 'trailing\\'], r'"/bin/echo" "trailing\\"'),
+        (['/bin/echo', 'say "hello"'], r'"/bin/echo" "say \"hello\""'),
+        (['/bin/echo', "it's here", ''], '"/bin/echo" "it\'s here" ""'),
+        (['/bin/echo', 'café'], '"/bin/echo" "café"'),
+        ((Path('/bin/echo'), 'one two'), '"/bin/echo" "one two"'),
+        (Path('/tmp/one\\ntwo'), r'"/tmp/one\\ntwo"'),
+        (['/bin/echo', '%n', '${USER}'], '"/bin/echo" "%n" "${USER}"'),
+        ('/bin/echo "${USER}" %n', '/bin/echo "${USER}" %n'),
+    ],
+)
+def test_systemd_service_escapes_command_arguments(command: Command, expected: str) -> None:
+    body = service(unit_name='example', command=command, on_failure=[])
+
+    assert [line for line in body.splitlines() if line.startswith('ExecStart=')] == [f'ExecStart={expected}']
 
 
 def test_launchd_plist_escapes_command_arguments() -> None:
