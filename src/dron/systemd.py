@@ -31,7 +31,6 @@ from .common import (
     TimerSpec,
     Unit,
     datetime_aware,
-    escape,
     is_managed,
     logger,
 )
@@ -88,13 +87,15 @@ def service(
     on_failure: Sequence[OnFailureAction],
     **kwargs: str,
 ) -> str:
-    # TODO not sure if something else needs to be escaped for ExecStart??
-    # todo systemd-escape? but only can be used for names
-
     # ok OnFailure is quite annoying since it can't take arguments etc... seems much easier to use ExecStopPost
     # (+ can possibly run on success too that way?)
     # https://unix.stackexchange.com/a/441662/180307
-    cmd = escape(command)
+    if isinstance(command, str):
+        cmd = command
+    else:
+        parts = [command] if isinstance(command, Path) else command
+        # JSON string escapes also follow systemd's quoting rules.
+        cmd = ' '.join(json.dumps(str(part), ensure_ascii=False) for part in parts)
 
     exec_stop_posts = [
         f"ExecStopPost=/bin/sh -c 'if [ $$EXIT_STATUS != 0 ]; then {action}; fi'" for action in on_failure
