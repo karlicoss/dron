@@ -387,7 +387,7 @@ def jobs():
 
     from ..systemd import _is_missing_systemd
 
-    if not _is_missing_systemd():
+    if _is_missing_systemd() is None:
         from ..cli import _drontab_example
 
         # this test doesn't work without systemd yet, because launchd adapter doesn't support unquoted commands, at least yet..

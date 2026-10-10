@@ -72,10 +72,10 @@ def main() -> NoReturn:
         with po:
             out = po.stdout
             assert out is not None
-            for line in out:
-                captured_log.append(line)
-                output_logger.info(line.decode('utf8', errors='replace').removesuffix('\n'))
-                sys.stdout.buffer.write(line)
+            for raw_line in out:
+                captured_log.append(raw_line)
+                output_logger.info(raw_line.decode('utf8', errors='replace').removesuffix('\n'))
+                sys.stdout.buffer.write(raw_line)
                 sys.stdout.buffer.flush()
         rc = po.returncode
 
