@@ -78,6 +78,17 @@ WantedBy=timers.target
 '''.lstrip()
 
 
+def _quote_arg(arg: str) -> str:
+    # Keep simple arguments unquoted for readability.
+    # Use shlex only for this check, since its shell quoting doesn't escape backslashes for systemd.
+    if shlex.quote(arg) == arg:
+        return arg
+    # JSON string escapes also follow systemd's quoting rules.
+    # NixOS uses the same approach in escapeSystemdExecArg:
+    # https://github.com/NixOS/nixpkgs/blob/master/nixos/lib/utils.nix
+    return json.dumps(arg, ensure_ascii=False)
+
+
 # TODO add Restart=always and RestartSec?
 # TODO allow to pass extra args
 def service(
@@ -94,8 +105,7 @@ def service(
         cmd = command
     else:
         parts = [command] if isinstance(command, Path) else command
-        # JSON string escapes also follow systemd's quoting rules.
-        cmd = ' '.join(json.dumps(str(part), ensure_ascii=False) for part in parts)
+        cmd = ' '.join(_quote_arg(str(part)) for part in parts)
 
     exec_stop_posts = [
         f"ExecStopPost=/bin/sh -c 'if [ $$EXIT_STATUS != 0 ]; then {action}; fi'" for action in on_failure
