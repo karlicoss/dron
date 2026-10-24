@@ -162,20 +162,23 @@ def test_delete_order_deletes_timers_before_services() -> None:
 @pytest.mark.parametrize(
     ('command', 'expected'),
     [
-        (['/bin/echo', r'one\ntwo'], r'"/bin/echo" "one\\ntwo"'),
-        (['/bin/echo', 'one\ntwo'], r'"/bin/echo" "one\ntwo"'),
-        (['/bin/echo', 'one\rtwo\tthree'], r'"/bin/echo" "one\rtwo\tthree"'),
-        (['/bin/echo', r'\d+'], r'"/bin/echo" "\\d+"'),
-        (['/bin/echo', 'trailing\\'], r'"/bin/echo" "trailing\\"'),
-        (['/bin/echo', 'say "hello"'], r'"/bin/echo" "say \"hello\""'),
-        (['/bin/echo', "it's here", ''], '"/bin/echo" "it\'s here" ""'),
-        (['/bin/echo', 'café'], '"/bin/echo" "café"'),
-        ((Path('/bin/echo'), 'one two'), '"/bin/echo" "one two"'),
-        (Path('/tmp/one\\ntwo'), r'"/tmp/one\\ntwo"'),
-        (['/bin/echo', '%n', '${USER}'], '"/bin/echo" "%n" "${USER}"'),
-        ('/bin/echo "${USER}" %n', '/bin/echo "${USER}" %n'),
+        (['/bin/echo', '--flag=value', '/path/to/file'], '/bin/echo --flag=value /path/to/file'),
+        (['/bin/echo', ';']                            , '/bin/echo ";"'),
+        (['/bin/echo', r'one\ntwo']                    , r'/bin/echo "one\\ntwo"'),
+        (['/bin/echo', 'one\ntwo']                     , r'/bin/echo "one\ntwo"'),
+        (['/bin/echo', 'one\rtwo\tthree']              , r'/bin/echo "one\rtwo\tthree"'),
+        (['/bin/echo', r'\d+']                         , r'/bin/echo "\\d+"'),
+        (['/bin/echo', 'trailing\\']                   , r'/bin/echo "trailing\\"'),
+        (['/bin/echo', 'say "hello"']                  , r'/bin/echo "say \"hello\""'),
+        (['/bin/echo', "it's"]                         , '/bin/echo "it\'s"'),
+        (['/bin/echo', "it's here", '']                , '/bin/echo "it\'s here" ""'),
+        (['/bin/echo', 'café']                         , '/bin/echo "café"'),
+        ((Path('/bin/echo'), 'one two')                , '/bin/echo "one two"'),
+        (Path('/tmp/one\\ntwo')                        , r'"/tmp/one\\ntwo"'),
+        (['/bin/echo', '%n', '${USER}']                , '/bin/echo %n "${USER}"'),
+        ('/bin/echo "${USER}" %n'                      , '/bin/echo "${USER}" %n'),
     ],
-)
+)  # fmt: skip
 def test_systemd_service_escapes_command_arguments(command: Command, expected: str) -> None:
     body = service(unit_name='example', command=command, on_failure=[])
 
