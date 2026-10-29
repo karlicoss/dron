@@ -79,7 +79,7 @@ jobs:
         fetch-depth: 0  # nicer to have all git history when debugging/for tests
 
     # setup-uv doesn't publish floating major/minor tags, so use an exact full tag.
-    - uses: astral-sh/setup-uv@v10.3.0
+    - uses: astral-sh/setup-uv@v10.3.2
       with:
         python-version: ${{ matrix.python-version }}
         enable-cache: false  # we don't have lock files during initial CI checkout, so can't use them as cache key
@@ -126,7 +126,7 @@ jobs:
         fetch-depth: 0  # pull all commits to correctly infer vcs version
 
     # setup-uv doesn't publish floating major/minor tags, so use an exact full tag.
-    - uses: astral-sh/setup-uv@v10.3.0
+    - uses: astral-sh/setup-uv@v10.3.2
       with:
         python-version: *minimum_python
         enable-cache: false  # we don't have lock files during initial CI checkout, so can't use them as cache key
