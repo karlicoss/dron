@@ -15,11 +15,12 @@ dependencies = [
 requires-python = ">=3.12"
 
 ## these are only useful for pypi
-description = "What if cron and systemd had a baby?"  # shows on project page/in search
-readme      = {file = "README.org", content-type = "text/plain"}
-license     = {file = "LICENSE"}
-authors     = [{name = "Dima Gerasimov (@karlicoss)", email = "karlicoss@gmail.com"}]
-maintainers = [{name = "Dima Gerasimov (@karlicoss)", email = "karlicoss@gmail.com"}]
+description   = "What if cron and systemd had a baby?"  # shows on project page/in search
+readme        = {file = "README.org", content-type = "text/plain"}
+license       = "MIT"
+license-files = ["LICENSE"]
+authors       = [{name = "Dima Gerasimov (@karlicoss)", email = "karlicoss@gmail.com"}]
+maintainers   = [{name = "Dima Gerasimov (@karlicoss)", email = "karlicoss@gmail.com"}]
 
 [project.urls]  # pypi will fetch some github stats/link, so somewhat useful
 Homepage = "https://github.com/karlicoss/dron"
