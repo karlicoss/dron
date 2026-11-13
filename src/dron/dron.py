@@ -8,7 +8,7 @@ from concurrent.futures import ProcessPoolExecutor
 from dataclasses import dataclass
 from difflib import unified_diff
 from pathlib import Path
-from subprocess import check_call
+from subprocess import check_call, run
 from typing import assert_never
 
 import click
@@ -299,7 +299,12 @@ def execute_apply_plan(*, plan: ApplyPlan) -> None:
     for delete in deletes_ordered:
         if IS_SYSTEMD:
             # A failed inactive unit treats stop as already done and keeps its failed state until explicitly reset.
-            check_call(_systemctl('reset-failed', delete.unit))
+            # Only reset failed units, since reset-failed errors with "Unit not loaded" for units systemd has unloaded.
+            # systemd may unload an inactive unit as soon as nothing references it,
+            #   e.g. a timer-triggered service once its timer is disabled, so we can't rely on the deletion order.
+            # Failed units stay loaded until reset, and stop loads an unloaded unit from its linked file.
+            if run(_systemctl('is-failed', '--quiet', delete.unit), check=False).returncode == 0:
+                check_call(_systemctl('reset-failed', delete.unit))
             check_call(_systemctl('stop', delete.unit))
             check_call(_systemctl('disable', delete.unit))
         else:
