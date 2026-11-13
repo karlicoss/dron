@@ -107,8 +107,10 @@ def service(
         parts = [command] if isinstance(command, Path) else command
         cmd = ' '.join(_quote_arg(str(part)) for part in parts)
 
+    # A clean SIGTERM has EXIT_STATUS=TERM, while a timeout can have EXIT_STATUS=0.
     exec_stop_posts = [
-        f"ExecStopPost=/bin/sh -c 'if [ $$EXIT_STATUS != 0 ]; then {action}; fi'" for action in on_failure
+        f"""ExecStopPost=/bin/sh -c 'if [ "$$SERVICE_RESULT" != success ]; then {action}; fi'"""
+        for action in on_failure
     ]
 
     sections: dict[str, list[str]] = {}
