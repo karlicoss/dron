@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import plistlib
+import shlex
 import sys
 from collections.abc import Iterator
 from pathlib import Path
+from subprocess import run
 
 import pytest
 
@@ -183,6 +185,29 @@ def test_systemd_service_escapes_command_arguments(command: Command, expected: s
     body = service(unit_name='example', command=command, on_failure=[])
 
     assert [line for line in body.splitlines() if line.startswith('ExecStart=')] == [f'ExecStart={expected}']
+
+
+@pytest.mark.parametrize(
+    ('service_result', 'exit_status', 'should_notify'),
+    [
+        ('success', 'TERM', False),
+        ('timeout', '0'   , True ),
+    ],
+)  # fmt: skip
+def test_systemd_service_failure_notifications(*, service_result: str, exit_status: str, should_notify: bool) -> None:
+    body = service(
+        unit_name='example',
+        command='/bin/true',
+        on_failure=['/bin/echo notification'],
+    )
+    [command] = [line.removeprefix('ExecStopPost=') for line in body.splitlines() if line.startswith('ExecStopPost=')]
+    env = {'SERVICE_RESULT': service_result, 'EXIT_STATUS': exit_status}
+    # systemd turns $$ into a literal $ before invoking the shell.
+    args = [arg.replace('$$', '$') for arg in shlex.split(command)]
+    result = run(args, env=env, capture_output=True, text=True, check=True)
+    assert result.stderr == ''
+    expected = 'notification\n' if should_notify else ''
+    assert result.stdout == expected
 
 
 def test_launchd_plist_escapes_command_arguments() -> None:
