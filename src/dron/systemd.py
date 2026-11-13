@@ -335,7 +335,7 @@ def test_managed_units() -> None:
     # dbus.exceptions.DBusException: org.freedesktop.DBus.Error.BadAddress: Address does not contain a colon
     # todo maybe don't need it anymore with 20.04 circleci?
     if 'CI' not in os.environ:
-        cmd_monitor.callback(n=1, once=True, command=True, rate=True)  # type: ignore[misc]  # ty: ignore[call-non-callable]
+        cmd_monitor.callback(n=1, once=True, command=True, rate=True)  # type: ignore[misc]  # ty: ignore[not-callable]
 
 
 def skip_if_no_systemd() -> None:
